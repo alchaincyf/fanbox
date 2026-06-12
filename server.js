@@ -640,6 +640,7 @@ async function parseClaudeSession(fp, st) {
   if (hit && hit.size === st.size && hit.mtimeMs === st.mtimeMs) return hit.sess;
   const sess = { id: path.basename(fp, '.jsonl'), agent: 'claude', title: '', firstT: 0, lastT: st.mtimeMs, userMsgs: 0, files: [], skills: [] };
   const filesSet = new Set(), skillsSet = new Set();
+  let customTitle = '', aiTitle = ''; // Claude Code 落盘的真标题行，重复出现以最后一条为准
   // 流式逐行，廉价字符串预判后才 JSON.parse——大会话文件也不整读进内存
   const stream = fs.createReadStream(fp, { encoding: 'utf8' });
   let rest = '';
@@ -647,6 +648,13 @@ async function parseClaudeSession(fp, st) {
     if (!sess.firstT) {
       const m = line.match(/"timestamp":"([^"]+)"/);
       if (m) sess.firstT = Date.parse(m[1]) || 0;
+    }
+    if (line.includes('"type":"custom-title"') || line.includes('"type":"ai-title"')) {
+      try {
+        const d = JSON.parse(line);
+        if (d.type === 'custom-title' && d.customTitle) customTitle = String(d.customTitle);
+        else if (d.type === 'ai-title' && d.aiTitle) aiTitle = String(d.aiTitle);
+      } catch { /* */ }
     }
     if (line.includes('"type":"user"') && !line.includes('"isMeta":true') && !line.includes('"tool_use_id"')) {
       sess.userMsgs++;
@@ -688,6 +696,8 @@ async function parseClaudeSession(fp, st) {
     while ((idx = rest.indexOf('\n')) !== -1) { handleLine(rest.slice(0, idx)); rest = rest.slice(idx + 1); }
   }
   if (rest.trim()) handleLine(rest);
+  // 标题优先级：用户手改 > AI 起的 > 首条用户消息兜底
+  sess.title = (customTitle || aiTitle || sess.title).slice(0, 160);
   sess.files = [...filesSet].slice(0, 80);
   sess.skills = [...skillsSet].slice(0, 20);
   projMemCache.set(fp, { size: st.size, mtimeMs: st.mtimeMs, sess });
@@ -761,6 +771,30 @@ async function projectMemory(p) {
   sessions.sort((a, b) => (b.title ? 1 : 0) - (a.title ? 1 : 0) || b.lastT - a.lastT);
   sessions.sort((a, b) => b.lastT - a.lastT);
   return { ok: true, cwd, sessions: sessions.filter((s) => s.title || s.files.length).slice(0, 40) };
+}
+
+// 改会话标题：复用 Claude Code 自己的 custom-title 机制——往会话 jsonl 末尾 append 一行，
+// 重复出现以最后一条为准，所以不用重写文件，对运行中的会话也安全；claude --resume 选择器同步可见
+async function setSessionTitle(b) {
+  const id = String(b.id || '');
+  if (!/^[0-9a-f][0-9a-f-]{7,}$/i.test(id)) return { ok: false, error: '无效会话 id' };
+  const title = String(b.title || '').replace(/\s+/g, ' ').trim().slice(0, 160);
+  if (!title) return { ok: false, error: '标题不能为空' };
+  const fp = path.join(CLAUDE_PROJ, mungeClaudeDir(resolvePath(b.path)), id + '.jsonl');
+  let st;
+  try { st = await fsp.stat(fp); } catch { return { ok: false, error: '找不到这个会话的日志文件' }; }
+  // 文件末尾若没换行（异常截断），补一个再 append，免得粘到上一行把两行都毁了
+  let needNL = false;
+  if (st.size > 0) {
+    const fh = await fsp.open(fp, 'r');
+    try {
+      const buf = Buffer.alloc(1);
+      await fh.read(buf, 0, 1, st.size - 1);
+      needNL = buf[0] !== 0x0a;
+    } finally { await fh.close(); }
+  }
+  await fsp.appendFile(fp, (needNL ? '\n' : '') + JSON.stringify({ type: 'custom-title', customTitle: title, sessionId: id }) + '\n');
+  return { ok: true, title };
 }
 
 // ---------- 磁盘占用透视：算清当前目录每个子项的真实占用 ----------
@@ -1867,6 +1901,9 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === '/api/project-memory') {
       return sendJSON(res, 200, await projectMemory(url.searchParams.get('path')));
+    }
+    if (p === '/api/session-title' && req.method === 'POST') {
+      return sendJSON(res, 200, await setSessionTitle(await readBody(req)));
     }
     if (p === '/api/lang' && req.method === 'POST') {
       const b = await readBody(req);

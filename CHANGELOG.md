@@ -11,6 +11,9 @@
 
 ## [Unreleased]
 
+### Added
+- 项目记忆显示真会话标题并支持改名：标题不再是首条用户消息截断，改为读 Claude Code 落盘的标题行（手改 `custom-title` > AI 起的 `ai-title` > 首条消息兜底）；Claude 会话标题旁新增 ✎，原地改名走 `POST /api/session-title`——往会话 jsonl 末尾 append 一行 `custom-title`（不重写文件，对运行中会话安全），改完 `claude --resume` 选择器同步可见；Codex 无标题机制，只读
+
 ## [1.7.2] - 2026-06-11
 
 ### Changed

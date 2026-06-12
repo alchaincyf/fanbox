@@ -1342,7 +1342,8 @@ async function memoryPanel(dirPath) {
     <div class="input-title">项目记忆 · ${escapeHtml(dirPath.replace(state.home, '~'))}</div>
     <div class="mem-body"><div class="cmdk-loading">翻会话日志中…</div></div></div>`;
   document.body.appendChild(ov);
-  const onKey = (ev) => { if (ev.key === 'Escape') { ev.preventDefault(); close(); } };
+  // Esc 在标题编辑框里只取消编辑（input 自己处理），不关弹窗
+  const onKey = (ev) => { if (ev.key === 'Escape' && !(ev.target.closest && ev.target.closest('.mem-title-input'))) { ev.preventDefault(); close(); } };
   const close = () => { ov.remove(); document.removeEventListener('keydown', onKey, true); };
   ov.onclick = (ev) => { if (ev.target === ov) close(); };
   document.addEventListener('keydown', onKey, true);
@@ -1357,6 +1358,7 @@ async function memoryPanel(dirPath) {
       <div class="mem-head" data-i="${i}">
         <span class="mem-agent${s.agent === 'codex' ? ' codex' : ''}">${s.agent === 'codex' ? '>_' : 'C'}</span>
         <span class="mem-title">${escapeHtml(s.title || '（无标题会话）')}</span>
+        ${s.agent === 'claude' ? `<button class="ghost-btn mem-edit" data-i="${i}" title="改标题（Claude Code 里也会同步显示）">✎</button>` : ''}
         <button class="ghost-btn mem-resume" data-i="${i}" title="在内嵌终端里接上这段会话的上下文继续">▶ 续上</button>
       </div>
       <div class="mem-meta">${fmtTime(s.lastT)} · ${s.userMsgs} 条消息${s.files.length ? ` · 改了 ${s.files.length} 个文件` : ''}${s.skills.length ? ' · ' + s.skills.map((k) => `<i class="mem-skill">${escapeHtml(k)}</i>`).join(' ') : ''}</div>
@@ -1364,9 +1366,40 @@ async function memoryPanel(dirPath) {
     </div>`).join('');
   body.querySelectorAll('.mem-head').forEach((h) => {
     h.onclick = (ev) => {
-      if (ev.target.closest('.mem-resume')) return;
+      if (ev.target.closest('.mem-resume') || ev.target.closest('.mem-edit') || ev.target.closest('.mem-title-input')) return;
       const files = h.parentElement.querySelector('.mem-files');
       if (files) files.classList.toggle('hidden');
+    };
+  });
+  // 改标题：标题原地变输入框，Enter 保存（append custom-title 行）、Esc/失焦取消
+  body.querySelectorAll('.mem-edit').forEach((b) => {
+    b.onclick = () => {
+      const s = d.sessions[Number(b.dataset.i)];
+      const titleEl = b.parentElement.querySelector('.mem-title');
+      const input = document.createElement('input');
+      input.className = 'mem-title-input';
+      input.value = s.title || '';
+      titleEl.replaceWith(input);
+      input.focus(); input.select();
+      let done = false, saving = false;
+      const restore = (text) => {
+        if (done) return; done = true;
+        const span = document.createElement('span');
+        span.className = 'mem-title';
+        span.textContent = text || '（无标题会话）';
+        input.replaceWith(span);
+      };
+      input.onblur = () => { if (!saving) restore(s.title); };
+      input.onkeydown = async (ke) => {
+        if (ke.key === 'Escape') { restore(s.title); return; }
+        if (ke.key !== 'Enter') return;
+        const v = input.value.trim();
+        if (!v || v === s.title) { restore(s.title); return; }
+        saving = true;
+        const r = await apiPost('/api/session-title', { path: dirPath, id: s.id, title: v });
+        if (r.ok) { s.title = r.title; restore(s.title); toast('标题已更新'); }
+        else { saving = false; restore(s.title); toast(r.error || '改标题失败', true); }
+      };
     };
   });
   body.querySelectorAll('.mem-resume').forEach((b) => {

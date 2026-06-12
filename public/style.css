@@ -556,6 +556,9 @@ kbd {
 .mem-agent.codex { background: var(--bg-3); color: var(--text-dim); }
 .mem-title { flex: 1; font-size: 12.5px; line-height: 1.45; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .mem-resume { flex: none; font-size: 11px; padding: 3px 8px; }
+.mem-edit { flex: none; font-size: 11px; padding: 3px 7px; }
+.mem-title-input { flex: 1; min-width: 0; font: inherit; font-size: 12.5px; line-height: 1.45; background: var(--bg); color: var(--text); border: 1px solid var(--accent); border-radius: 6px; padding: 2px 7px; }
+.mem-title-input:focus { outline: none; }
 .mem-meta { font-size: 11px; color: var(--text-faint); margin: 4px 0 0 28px; }
 .mem-skill { font-style: normal; font-family: var(--font-mono); font-size: 10px; padding: 1px 5px; border-radius: 4px; background: var(--accent-soft); color: var(--accent); }
 .mem-files { margin: 6px 0 0 28px; }
