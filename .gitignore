@@ -19,3 +19,7 @@ build/*
 
 # 验证脚本的截图产物（可复跑重生成，不入库）
 experiments/bugfix-202606/shots/
+
+# agent 协作工作区（本地记忆：计划/任务/进度/架构笔记，不入库、不需随仓库更新）
+docs/
+CLAUDE.md

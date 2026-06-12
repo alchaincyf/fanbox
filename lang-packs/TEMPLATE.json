@@ -1,0 +1,664 @@
+{
+  "$comment": "Language pack template for FanBox — copy this file, rename, and translate dict values (keys are English source strings, do not translate keys). rules use the same English regexes; replace each replacement string with your translation, using $1-$9 for captured groups. See lang-packs/README.md for the full workflow.",
+  "base": "en",
+  "id": "my-language",
+  "name": "My Language",
+  "lang": "xx",
+  "dict": {
+    "Search all files": "Search all files",
+    "Quick access": "Quick access",
+    "Favorites": "Favorites",
+    "Agent projects": "Agent projects",
+    "Projects recently worked on by Claude Code / Codex, auto-discovered from their local session logs": "Projects recently worked on by Claude Code / Codex, auto-discovered from their local session logs",
+    "Skills overview": "Skills overview",
+    "All Claude Code / Codex skills on this Mac: which ones pull their weight, which gather dust, which silently fail": "All Claude Code / Codex skills on this Mac: which ones pull their weight, which gather dust, which silently fail",
+    "Agent usage": "Agent usage",
+    "Claude Code / Codex usage — official limit windows + local session logs, without keeping them open": "Claude Code / Codex usage — official limit windows + local session logs, without keeping them open",
+    "Theme": "Theme",
+    "Archive": "Archive",
+    "Terminal": "Terminal",
+    "Warm paper archive": "Warm paper archive",
+    "Terminal-core Volt": "Terminal-core Volt",
+    "Runs locally · data never leaves this Mac": "Runs locally · data never leaves this Mac",
+    "Switch interface language": "Switch interface language",
+    "Simplified Chinese": "Simplified Chinese",
+    "Import language pack…": "Import language pack…",
+    "Import failed: ": "Import failed: ",
+    "Import failed: not a valid JSON file": "Import failed: not a valid JSON file",
+    "Import failed: language pack is missing id / name / lang / dict fields": "Import failed: language pack is missing id / name / lang / dict fields",
+    "Import failed: network error": "Import failed: network error",
+    "Unknown error": "Unknown error",
+    "Drag to resize sidebar": "Drag to resize sidebar",
+    "Expand subfolders": "Expand subfolders",
+    "No subfolders": "No subfolders",
+    "Hover a file and click ☆ to favorite": "Hover a file and click ☆ to favorite",
+    "Remove": "Remove",
+    "Projects run with Claude Code / Codex will show up here": "Projects run with Claude Code / Codex will show up here",
+    "Favorite": "Favorite",
+    "Toggle sidebar (⌘B)": "Toggle sidebar (⌘B)",
+    "Back": "Back",
+    "Up one level": "Up one level",
+    "Show hidden files": "Show hidden files",
+    "Hidden files": "Hidden files",
+    "Name": "Name",
+    "Date": "Date",
+    "Size": "Size",
+    "Grid": "Grid",
+    "List": "List",
+    "Thumbnail size": "Thumbnail size",
+    "Small": "Small",
+    "Medium": "Medium",
+    "Large": "Large",
+    "Files agents changed this session (click to review / diff)": "Files agents changed this session (click to review / diff)",
+    "Recently modified files here": "Recently modified files here",
+    "Open system terminal in current folder": "Open system terminal in current folder",
+    "Recently modified": "Recently modified",
+    "Modified": "Modified",
+    "Created": "Created",
+    "This folder is empty": "This folder is empty",
+    "No recently modified files": "No recently modified files",
+    "Release": "Release",
+    "Version bump → CHANGELOG → build → push → Release, end to end in the terminal": "Version bump → CHANGELOG → build → push → Release, end to end in the terminal",
+    "Project memory": "Project memory",
+    "What AI has done in this folder: past sessions, changed files, one-click resume": "What AI has done in this folder: past sessions, changed files, one-click resume",
+    "Disk usage": "Disk usage",
+    "True disk usage including subfolders": "True disk usage including subfolders",
+    "⚠ Too many files — results may be incomplete. Open a more specific subfolder to see everything.": "⚠ Too many files — results may be incomplete. Open a more specific subfolder to see everything.",
+    "Scanning recently modified files…": "Scanning recently modified files…",
+    "edited": "edited",
+    "Open": "Open",
+    "Preview": "Preview",
+    "Organize with AI…": "Organize with AI…",
+    "Analyze disk usage": "Analyze disk usage",
+    "Open in Terminal": "Open in Terminal",
+    "Open Terminal in enclosing folder": "Open Terminal in enclosing folder",
+    "Edit text": "Edit text",
+    "Edit image": "Edit image",
+    "Open in editor": "Open in editor",
+    "Reveal in Finder": "Reveal in Finder",
+    "Show in Finder": "Show in Finder",
+    "Copy path": "Copy path",
+    "Unfavorite": "Unfavorite",
+    "Rename…": "Rename…",
+    "Move to Trash": "Move to Trash",
+    "New folder…": "New folder…",
+    "New file…": "New file…",
+    "Loading…": "Loading…",
+    "Close": "Close",
+    "Drag to resize": "Drag to resize",
+    "Open with default app": "Open with default app",
+    "View changes (HEAD vs current)": "View changes (HEAD vs current)",
+    "Copy image (paste into other apps)": "Copy image (paste into other apps)",
+    "Copy file (paste in Finder)": "Copy file (paste in Finder)",
+    "Can't preview this file type": "Can't preview this file type",
+    "Can't read": "Can't read",
+    "Empty table": "Empty table",
+    "View source": "View source",
+    "Rendered preview": "Rendered preview",
+    "Open in browser (full interactivity)": "Open in browser (full interactivity)",
+    "Click to zoom": "Click to zoom",
+    "Click outside to close · scroll to zoom": "Click outside to close · scroll to zoom",
+    "Send to terminal": "Send to terminal",
+    "Flung into the terminal — add your ask and press Enter": "Flung into the terminal — add your ask and press Enter",
+    "File is not in a git repo": "File is not in a git repo",
+    "This file type cannot be diffed": "This file type cannot be diffed",
+    "No changes vs HEAD": "No changes vs HEAD",
+    "Editor not ready": "Editor not ready",
+    "New file (not in HEAD) · read-only": "New file (not in HEAD) · read-only",
+    "Left: HEAD　·　Right: working tree · read-only": "Left: HEAD　·　Right: working tree · read-only",
+    "Back to preview": "Back to preview",
+    "Save": "Save",
+    "Done": "Done",
+    "⌘S save · ⌘F find · Esc done": "⌘S save · ⌘F find · Esc done",
+    "⌘S save · Esc done": "⌘S save · Esc done",
+    "Autosave · ⌘S to save now": "Autosave · ⌘S to save now",
+    "Source": "Source",
+    "Rich text": "Rich text",
+    "Saving…": "Saving…",
+    "Saved": "Saved",
+    "Save failed": "Save failed",
+    "Not saved: file changed externally": "Not saved: file changed externally",
+    "File too large for in-place editing": "File too large for in-place editing",
+    "Unsaved changes — discard and exit? (To save, hit Cancel then press ⌘S)": "Unsaved changes — discard and exit? (To save, hit Cancel then press ⌘S)",
+    "You have unsaved edits — discard and leave?": "You have unsaved edits — discard and leave?",
+    "File was modified externally (possibly by an agent). Overwriting discards those changes — overwrite?": "File was modified externally (possibly by an agent). Overwriting discards those changes — overwrite?",
+    "Loading image…": "Loading image…",
+    "Image too large to edit (>60MP) — compress it first": "Image too large to edit (>60MP) — compress it first",
+    "Image failed to load": "Image failed to load",
+    "Freehand pen": "Freehand pen",
+    "Rectangle": "Rectangle",
+    "Line": "Line",
+    "Arrow": "Arrow",
+    "Text": "Text",
+    "Pixelate": "Pixelate",
+    "Color": "Color",
+    "Stroke width": "Stroke width",
+    "Undo ⌘Z": "Undo ⌘Z",
+    "Undo": "Undo",
+    "Format": "Format",
+    "Width": "Width",
+    "Quality": "Quality",
+    "Save As": "Save As",
+    "Add text": "Add text",
+    "Type text": "Type text",
+    "Nothing to undo": "Nothing to undo",
+    "Format changed — save as new file": "Format changed — save as new file",
+    "Filename (with extension)": "Filename (with extension)",
+    "This overwrites the original and re-encodes it (slight quality loss). It cannot be undone. Overwrite? \"Save As\" is recommended.": "This overwrites the original and re-encodes it (slight quality loss). It cannot be undone. Overwrite? \"Save As\" is recommended.",
+    "Saved (original overwritten)": "Saved (original overwritten)",
+    "Open failed": "Open failed",
+    "Revealed in Finder": "Revealed in Finder",
+    "Opened this folder in terminal": "Opened this folder in terminal",
+    "Opened in editor": "Opened in editor",
+    "'code' command not found — opened with default app": "'code' command not found — opened with default app",
+    "Opened": "Opened",
+    "Path copied": "Path copied",
+    "Image copied — paste it into other apps": "Image copied — paste it into other apps",
+    "File copied — paste it in Finder": "File copied — paste it in Finder",
+    "Copy file failed": "Copy file failed",
+    "Added to Favorites": "Added to Favorites",
+    "Removed from Favorites": "Removed from Favorites",
+    "Rename": "Rename",
+    "New name": "New name",
+    "Renamed": "Renamed",
+    "Moved to Trash — restorable from Trash": "Moved to Trash — restorable from Trash",
+    "Moved to Trash": "Moved to Trash",
+    "New folder": "New folder",
+    "New file": "New file",
+    "Folder name": "Folder name",
+    "Filename (with extension, e.g. note.md)": "Filename (with extension, e.g. note.md)",
+    "Folder created": "Folder created",
+    "File created": "File created",
+    "Cancel": "Cancel",
+    "OK": "OK",
+    "New screenshot · drag into terminal": "New screenshot · drag into terminal",
+    "Feed the path to the agent in the terminal": "Feed the path to the agent in the terminal",
+    "→ Terminal": "→ Terminal",
+    "Move into this folder's 素材/ (assets) subfolder": "Move into this folder's 素材/ (assets) subfolder",
+    "File into assets": "File into assets",
+    "Mark it up before sending": "Mark it up before sending",
+    "Annotate": "Annotate",
+    "Goes away on its own": "Goes away on its own",
+    "Filed into 素材/": "Filed into 素材/",
+    "Move failed": "Move failed",
+    "Digging through session logs…": "Digging through session logs…",
+    "No agent sessions in this folder yet": "No agent sessions in this folder yet",
+    "Run Claude Code / Codex here and past sessions will appear": "Run Claude Code / Codex here and past sessions will appear",
+    "(untitled session)": "(untitled session)",
+    "Resume this session's context in the embedded terminal": "Resume this session's context in the embedded terminal",
+    "▶ Resume": "▶ Resume",
+    "Session resumed in terminal": "Session resumed in terminal",
+    "claude / codex command not found — AI organize needs one of these CLIs installed": "claude / codex command not found — AI organize needs one of these CLIs installed",
+    "Failed to launch AI organize": "Failed to launch AI organize",
+    "Back to files": "Back to files",
+    "Claude is ready — it lays out a plan first and only moves files after you approve": "Claude is ready — it lays out a plan first and only moves files after you approve",
+    "Codex is ready — it lays out a plan first and only moves files after you approve": "Codex is ready — it lays out a plan first and only moves files after you approve",
+    "Checking project status…": "Checking project status…",
+    "Version": "Version",
+    "Release notes": "Release notes",
+    "Release notes (prefilled from CHANGELOG's Unreleased section)": "Release notes (prefilled from CHANGELOG's Unreleased section)",
+    "Build (npm run dist)": "Build (npm run dist)",
+    "Push (git push)": "Push (git push)",
+    "GitHub Release (with dmg)": "GitHub Release (with dmg)",
+    "Working tree has uncommitted changes — they will be included in the release commit": "Working tree has uncommitted changes — they will be included in the release commit",
+    "Not a git repo — only the version number can be bumped": "Not a git repo — only the version number can be bumped",
+    "Run in terminal": "Run in terminal",
+    "Version must be x.y.z": "Version must be x.y.z",
+    "Preparation failed": "Preparation failed",
+    "Calculating… (big folders take a few seconds)": "Calculating… (big folders take a few seconds)",
+    "Read failed": "Read failed",
+    "↑ Up one level": "↑ Up one level",
+    "Search by filename…   prefix with “content:” to search inside files, e.g. “content:useState”": "Search by filename…   prefix with “content:” to search inside files, e.g. “content:useState”",
+    "Toggle search scope (Tab)": "Toggle search scope (Tab)",
+    "⤢ This Mac": "⤢ This Mac",
+    "▢ This folder": "▢ This folder",
+    "Scope: ": "Scope: ",
+    "· Tab scope · ↑↓ select · ↵ open · ⌘↵ open in editor": "· Tab scope · ↑↓ select · ↵ open · ⌘↵ open in editor",
+    "This Mac (home folder and below)": "This Mac (home folder and below)",
+    "Type to search · fuzzy filename match; “content:” searches full text (incl. PDFs and text in screenshots)": "Type to search · fuzzy filename match; “content:” searches full text (incl. PDFs and text in screenshots)",
+    "Type to search": "Type to search",
+    "Searching…": "Searching…",
+    "No results": "No results",
+    "⚠ Results may be incomplete — try a more specific term or narrow to this folder": "⚠ Results may be incomplete — try a more specific term or narrow to this folder",
+    "Welcome to FanBox": "Welcome to FanBox",
+    "The vibe-coding cockpit — find files, run agents, watch them edit, edit on the fly, all in one window:": "The vibe-coding cockpit — find files, run agents, watch them edit, edit on the fly, all in one window:",
+    "searches all files and folders;": "searches all files and folders;",
+    "opens the whole project in your editor;": "opens the whole project in your editor;",
+    "content:keyword": "content:keyword",
+    "searches inside files": "searches inside files",
+    "The top": "The top",
+    "button opens an embedded terminal for agents like Claude Code;": "button opens an embedded terminal for agents like Claude Code;",
+    "drag files/folders into the terminal": "drag files/folders into the terminal",
+    "to insert paths as context": "to insert paths as context",
+    "Single-click": "Single-click",
+    "to preview,": "to preview,",
+    "double-click": "double-click",
+    "to open with the system; in preview,": "to open with the system; in preview,",
+    "Edit": "Edit",
+    "gives WYSIWYG markdown,": "gives WYSIWYG markdown,",
+    "lets you annotate / pixelate / convert": "lets you annotate / pixelate / convert",
+    "Files agents touch light up live as \"edited ×N\" — no window-switching to keep watch": "Files agents touch light up live as \"edited ×N\" — no window-switching to keep watch",
+    "Get started": "Get started",
+    "Launch Claude Code (skipping permission prompts): starts in the idle terminal, or opens a new tab if one is busy": "Launch Claude Code (skipping permission prompts): starts in the idle terminal, or opens a new tab if one is busy",
+    "Launch Codex: starts in the idle terminal, or opens a new tab if one is busy": "Launch Codex: starts in the idle terminal, or opens a new tab if one is busy",
+    "Terminal follows browsing: auto-cd when you enter a folder": "Terminal follows browsing: auto-cd when you enter a folder",
+    "Follow": "Follow",
+    "Jump file view to the terminal's current folder": "Jump file view to the terminal's current folder",
+    "Locate": "Locate",
+    "New terminal": "New terminal",
+    "Maximize terminal": "Maximize terminal",
+    "Restore terminal": "Restore terminal",
+    "Toggle bottom / right layout": "Toggle bottom / right layout",
+    "Toggle chime": "Toggle chime",
+    "Hide terminal": "Hide terminal",
+    "Chime off (click to enable)": "Chime off (click to enable)",
+    "Chime on (click to mute)": "Chime on (click to mute)",
+    "Tip: drag files / folders into the terminal to insert their paths as agent context": "Tip: drag files / folders into the terminal to insert their paths as agent context",
+    "Terminal failed to start": "Terminal failed to start",
+    "Started in terminal": "Started in terminal",
+    "Embedded terminal unavailable (no terminal in the web version)": "Embedded terminal unavailable (no terminal in the web version)",
+    "(selected snippet)": "(selected snippet)",
+    "Jumped to that folder": "Jumped to that folder",
+    "Opened via a path seen in this session": "Opened via a path seen in this session",
+    "Couldn't get the terminal's folder": "Couldn't get the terminal's folder",
+    "Process exited": "Process exited",
+    "Agent running": "Agent running",
+    "Idle": "Idle",
+    "Double-click: jump file view to this terminal's folder": "Double-click: jump file view to this terminal's folder",
+    "Waiting for your approval": "Waiting for your approval",
+    "Agent task done": "Agent task done",
+    "Terminal exited": "Terminal exited",
+    "[Process exited — Enter to restart, or ✕ to close]": "[Process exited — Enter to restart, or ✕ to close]",
+    "5h window": "5h window",
+    "Weekly quota": "Weekly quota",
+    "Window reset — run Codex once for fresh numbers": "Window reset — run Codex once for fresh numbers",
+    "last 5h": "last 5h",
+    "today": "today",
+    "this week": "this week",
+    "Total tokens · from local session logs": "Total tokens · from local session logs",
+    "No local Claude Code / Codex session logs found": "No local Claude Code / Codex session logs found",
+    "Scanning local skills…": "Scanning local skills…",
+    "Scan failed": "Scan failed",
+    "All skills": "All skills",
+    "unique / incl. cross-CLI copies": "unique / incl. cross-CLI copies",
+    "Active in 45 days": "Active in 45 days",
+    "Gathering dust": "Gathering dust",
+    "Zero hits in 45 days": "Zero hits in 45 days",
+    "Issues": "Issues",
+    "truncated / missing frontmatter / residue": "truncated / missing frontmatter / residue",
+    "Claude resident budget (total description size)": "Claude resident budget (total description size)",
+    "Overflow is silently dropped — those skills never trigger": "Overflow is silently dropped — those skills never trigger",
+    "All": "All",
+    "Claude global": "Claude global",
+    "Project": "Project",
+    "Plugin": "Plugin",
+    "Cross-CLI dupes": "Cross-CLI dupes",
+    "Issues only": "Issues only",
+    "By hits": "By hits",
+    "By last hit": "By last hit",
+    "By health": "By health",
+    "By name": "By name",
+    "Origin": "Origin",
+    "Hits (45d)": "Hits (45d)",
+    "Last hit": "Last hit",
+    "On": "On",
+    "disabled": "disabled",
+    "residue": "residue",
+    "Enable (move back into skills folder)": "Enable (move back into skills folder)",
+    "Disable (move into _disabled/ — files kept, instantly hidden from the model)": "Disable (move into _disabled/ — files kept, instantly hidden from the model)",
+    "(no description)": "(no description)",
+    "▶ Invoke in terminal": "▶ Invoke in terminal",
+    "Show in file view": "Show in file view",
+    "Edit SKILL.md": "Edit SKILL.md",
+    "Description size": "Description size",
+    "Path": "Path",
+    "All copies": "All copies",
+    "Requires the desktop app's embedded terminal": "Requires the desktop app's embedded terminal",
+    "Open a terminal and start an agent first": "Open a terminal and start an agent first",
+    "No agent running in this terminal yet — hit the Claude / Codex launch button first": "No agent running in this terminal yet — hit the Claude / Codex launch button first",
+    "Changes this session": "Changes this session",
+    "No file changes captured yet.": "No file changes captured yet.",
+    "Run an agent and its edits will show up here live.": "Run an agent and its edits will show up here live.",
+    "▶ Replay": "▶ Replay",
+    "Clear": "Clear",
+    "Close (Esc)": "Close (Esc)",
+    "Agent editing right now": "Agent editing right now",
+    "▶ Play": "▶ Play",
+    "⏸ Pause": "⏸ Pause",
+    "↻ Replay": "↻ Replay",
+    "Not enough changes yet — let the agent edit a bit more before replaying": "Not enough changes yet — let the agent edit a bit more before replaying",
+    "Download": "Download",
+    "Don't remind me for this version": "Don't remind me for this version",
+    "Home": "Home",
+    "Desktop": "Desktop",
+    "Documents": "Documents",
+    "Downloads": "Downloads",
+    "Code": "Code",
+    "Projects": "Projects",
+    "Language pack must be a JSON object": "Language pack must be a JSON object",
+    "this pack targets an old FanBox text base — please get a pack updated for the English base (base: \"en\")": "this pack targets an old FanBox text base — please get a pack updated for the English base (base: \"en\")",
+    "id has an invalid format (lowercase letters/digits/- only, 1-40 chars)": "id has an invalid format (lowercase letters/digits/- only, 1-40 chars)",
+    "name cannot be empty": "name cannot be empty",
+    "lang is not a valid language tag (e.g. zh-TW)": "lang is not a valid language tag (e.g. zh-TW)",
+    "dict must be a flat object": "dict must be a flat object",
+    "dict keys and values must all be non-empty strings": "dict keys and values must all be non-empty strings",
+    "rules must be an array": "rules must be an array",
+    "each item in rules must be [regex string, replacement string]": "each item in rules must be [regex string, replacement string]",
+    "Language pack is too large (1MB limit)": "Language pack is too large (1MB limit)",
+    "Invalid path": "Invalid path",
+    "File does not exist": "File does not exist",
+    "Source file does not exist": "Source file does not exist",
+    "Only text files can be edited": "Only text files can be edited",
+    "Invalid content": "Invalid content",
+    "File was deleted externally": "File was deleted externally",
+    "File was modified externally": "File was modified externally",
+    "Invalid name": "Invalid name",
+    "An item with this name already exists": "An item with this name already exists",
+    "Invalid image data": "Invalid image data",
+    "Invalid file name": "Invalid file name",
+    "A file with this name already exists": "A file with this name already exists",
+    "Allow FanBox to control Finder in System Settings → Privacy & Security → Automation (first deletion will prompt for authorization)": "Allow FanBox to control Finder in System Settings → Privacy & Security → Automation (first deletion will prompt for authorization)",
+    "7z / rar have no built-in parser — open with a system archive utility instead": "7z / rar have no built-in parser — open with a system archive utility instead",
+    "Couldn't find the claude / codex command — AI organize needs one of these CLIs installed": "Couldn't find the claude / codex command — AI organize needs one of these CLIs installed",
+    "No package.json here — the release wizard only supports node projects": "No package.json here — the release wizard only supports node projects",
+    "Version format is wrong (expected x.y.z)": "Version format is wrong (expected x.y.z)",
+    "Can't read package.json": "Can't read package.json",
+    "package.json has no version field": "package.json has no version field",
+    "Residue file — not a valid skill, just taking up space in the directory": "Residue file — not a valid skill, just taking up space in the directory",
+    "⚠ Residue file — not a valid skill, just taking up space in the directory": "⚠ Residue file — not a valid skill, just taking up space in the directory",
+    "SKILL.md is missing frontmatter description — the model can't see it in its skill list, only manual invocation works": "SKILL.md is missing frontmatter description — the model can't see it in its skill list, only manual invocation works",
+    "⚠ SKILL.md is missing frontmatter description — the model can't see it in its skill list, only manual invocation works": "⚠ SKILL.md is missing frontmatter description — the model can't see it in its skill list, only manual invocation works",
+    "Missing SKILL.md — not a valid skill": "Missing SKILL.md — not a valid skill",
+    "⚠ Missing SKILL.md — not a valid skill": "⚠ Missing SKILL.md — not a valid skill",
+    "Not in the scanned skills list": "Not in the scanned skills list",
+    "Residue files can't be enabled/disabled — clean them up directly": "Residue files can't be enabled/disabled — clean them up directly",
+    "A directory with this name already exists at the destination": "A directory with this name already exists at the destination",
+    "just now": "just now"
+  },
+  "rules": [
+    [
+      "^Invalid regex in rules: ([\\s\\S]*)$",
+      "$&"
+    ],
+    [
+      "^(\\d+) minutes? ago$",
+      "$&"
+    ],
+    [
+      "^(\\d+) hours? ago$",
+      "$&"
+    ],
+    [
+      "^(\\d+) days? ago$",
+      "$&"
+    ],
+    [
+      "^(\\d+)m$",
+      "$&"
+    ],
+    [
+      "^(\\d+)h$",
+      "$&"
+    ],
+    [
+      "^(\\d+)d$",
+      "$&"
+    ],
+    [
+      "^(\\d+) s$",
+      "$&"
+    ],
+    [
+      "^(\\d+) min$",
+      "$&"
+    ],
+    [
+      "^([\\d.]+) hr$",
+      "$&"
+    ],
+    [
+      "^(\\d+) items?( · (\\d+) folders?)?( · (\\d+) files? (.+))?$",
+      "$&"
+    ],
+    [
+      "^(\\d+)(\\+)? items?$",
+      "$&"
+    ],
+    [
+      "^Can't open: ([\\s\\S]*)$",
+      "$&"
+    ],
+    [
+      "^Read failed: ([\\s\\S]*)$",
+      "$&"
+    ],
+    [
+      "^Open failed: ([\\s\\S]*)$",
+      "$&"
+    ],
+    [
+      "^Save failed: ([\\s\\S]*)$",
+      "$&"
+    ],
+    [
+      "^Rename failed: ([\\s\\S]*)$",
+      "$&"
+    ],
+    [
+      "^Create failed: ([\\s\\S]*)$",
+      "$&"
+    ],
+    [
+      "^Copy image failed: ([\\s\\S]*)$",
+      "$&"
+    ],
+    [
+      "^Action failed: ([\\s\\S]*)$",
+      "$&"
+    ],
+    [
+      "^Delete failed: ([\\s\\S]*) \\(first run: allow controlling Finder in the system prompt\\)$",
+      "$&"
+    ],
+    [
+      "^Delete failed: ([\\s\\S]*)$",
+      "$&"
+    ],
+    [
+      "^Terminal failed to start: ([\\s\\S]*)$",
+      "$&"
+    ],
+    [
+      "^Restart failed: ([\\s\\S]*)$",
+      "$&"
+    ],
+    [
+      "^Copy failed \\(browser limitation\\)\\. Path: ([\\s\\S]+)$",
+      "$&"
+    ],
+    [
+      "^Saved as (.+)$",
+      "$&"
+    ],
+    [
+      "^Move folder \"(.+)\" to Trash\\? You can restore it from Trash\\.$",
+      "$&"
+    ],
+    [
+      "^Move \"(.+)\" to Trash\\? \\(Restorable from the system Trash anytime\\)$",
+      "$&"
+    ],
+    [
+      "^Just changed:\\n([\\s\\S]+)$",
+      "$&"
+    ],
+    [
+      "^edited·(\\d+)$",
+      "$&"
+    ],
+    [
+      "^([A-Z0-9_.+-]+) project$",
+      "$&"
+    ],
+    [
+      "^Terminal \"(.*)\" is working in this project$",
+      "$&"
+    ],
+    [
+      "^Added · (.+)$",
+      "$&"
+    ],
+    [
+      "^Changes · (.+)$",
+      "$&"
+    ],
+    [
+      "^Edit · (.+)$",
+      "$&"
+    ],
+    [
+      "^Project memory · (.+)$",
+      "$&"
+    ],
+    [
+      "^Disk usage · (.+)$",
+      "$&"
+    ],
+    [
+      "^Created (.+)$",
+      "$&"
+    ],
+    [
+      "^Modified (.+)$",
+      "$&"
+    ],
+    [
+      "^(just now|\\d+ minutes? ago|\\d+ hours? ago|\\d+ days? ago|\\d{4}-\\d{2}-\\d{2}) · (\\d+) messages?(?: · changed (\\d+) files?)?$",
+      "$&"
+    ],
+    [
+      "^(\\d+) messages?$",
+      "$&"
+    ],
+    [
+      "^changed (\\d+) files?$",
+      "$&"
+    ],
+    [
+      "^([\\s\\S]+)\\n(.+) · active (just now|\\d+m|\\d+h|\\d+d)$",
+      "$&"
+    ],
+    [
+      "^now v(.+) →$",
+      "$&"
+    ],
+    [
+      "^v(.+) release pipeline running in terminal$",
+      "$&"
+    ],
+    [
+      "^(\\d+) hits? total$",
+      "$&"
+    ],
+    [
+      "^Total (.+?)( · top (\\d+) shown)?$",
+      "$&"
+    ],
+    [
+      "^This folder (.+)$",
+      "$&"
+    ],
+    [
+      "^Started (.+) in terminal$",
+      "$&"
+    ],
+    [
+      "^Couldn't find \"(.+)\"$",
+      "$&"
+    ],
+    [
+      "^No exact match — opened the closest \"(.+)\"$",
+      "$&"
+    ],
+    [
+      "^\\(snippet from (.+)\\)$",
+      "$&"
+    ],
+    [
+      "^(.+) is waiting on you$",
+      "$&"
+    ],
+    [
+      "^(.+) is now idle$",
+      "$&"
+    ],
+    [
+      "^Process in (.+) ended$",
+      "$&"
+    ],
+    [
+      "^Resets (\\d{1,2}:\\d{2})$",
+      "$&"
+    ],
+    [
+      "^Resets (Sun|Mon|Tue|Wed|Thu|Fri|Sat) (\\d{1,2}:\\d{2})$",
+      "$&"
+    ],
+    [
+      "^Snapshot: Codex session from (just now|\\d+ minutes? ago|\\d+ hours? ago|\\d+ days? ago)$",
+      "$&"
+    ],
+    [
+      "^The (\\d+) below had zero hits in 45 days — enabled descriptions still eat budget every session$",
+      "$&"
+    ],
+    [
+      "^(\\d+) cop(?:y|ies)$",
+      "$&"
+    ],
+    [
+      "^≈([\\d.]+)× over$",
+      "$&"
+    ],
+    [
+      "^([\\d,]+) chars \\/ ~([\\d,]+) budget \\(est\\.\\)$",
+      "$&"
+    ],
+    [
+      "^⚠ description is ([\\d,]+) chars; the model can't see past char ([\\d,]+) — trigger words in the tail will never fire$",
+      "$&"
+    ],
+    [
+      "^description is ([\\d,]+) chars; the model can't see past char ([\\d,]+) — trigger words in the tail will never fire$",
+      "$&"
+    ],
+    [
+      "^([\\d,]+) chars( · past cutoff)?$",
+      "$&"
+    ],
+    [
+      "^Enabled (.+)$",
+      "$&"
+    ],
+    [
+      "^Disabled (.+) \\(files kept — re-enable anytime\\)$",
+      "$&"
+    ],
+    [
+      "^Injected ([/$]\\S+) — add a sentence and press Enter$",
+      "$&"
+    ],
+    [
+      "^Changes this session · (\\d+)$",
+      "$&"
+    ],
+    [
+      "^Session replay · (\\d+) writes? · over (.+)$",
+      "$&"
+    ],
+    [
+      "^v(.+) is out$",
+      "$&"
+    ]
+  ]
+}

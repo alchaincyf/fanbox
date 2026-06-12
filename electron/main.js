@@ -18,7 +18,7 @@ require('../server.js');
 // node-pty 是原生模块，需 electron-rebuild 编译过；未就绪时终端能力降级但 app 仍可用
 let pty = null;
 try { pty = require('node-pty'); }
-catch (e) { console.error('[fanbox] node-pty 未就绪（跑 npm run rebuild）：', e.message); }
+catch (e) { console.error('[fanbox] node-pty is not ready (run npm run rebuild):', e.message); }
 
 const terminals = new Map();
 let win = null;
@@ -162,8 +162,8 @@ async function checkUpdate(opts) {
   if (!info) {
     if (manual) {
       dialog.showMessageBoxSync(win && !win.isDestroyed() ? win : undefined, {
-        type: 'warning', buttons: [M('好', 'OK')], message: M('检查更新失败', 'Update check failed'),
-        detail: M('没连上 GitHub（网络问题或接口限流），稍后再试。', 'Could not reach GitHub (network issue or rate limit). Try again later.'),
+        type: 'warning', buttons: [M('OK', '好')], message: M('Update check failed', '检查更新失败'),
+        detail: M('Could not reach GitHub (network issue or rate limit). Try again later.', '没连上 GitHub（网络问题或接口限流），稍后再试。'),
       });
     } else if (updRetry < 3) { updRetry++; setTimeout(checkUpdate, 10 * 60 * 1000); } // 失败别干等 12 小时
     return;
@@ -178,15 +178,15 @@ async function checkUpdate(opts) {
     const owner = win && !win.isDestroyed() ? win : undefined;
     if (newer) {
       const c = dialog.showMessageBoxSync(owner, {
-        type: 'info', buttons: [M('去下载', 'Download'), M('取消', 'Cancel')], defaultId: 0, cancelId: 1,
-        message: M(`发现新版本 v${pendingUpdate.version}`, `New version v${pendingUpdate.version} available`),
-        detail: M(`当前版本 v${app.getVersion()}。点「去下载」打开发布页，下载后替换 /Applications 里的旧版即可。`, `You are on v${app.getVersion()}. "Download" opens the release page; replace the old app in /Applications.`),
+        type: 'info', buttons: [M('Download', '去下载'), M('Cancel', '取消')], defaultId: 0, cancelId: 1,
+        message: M(`New version v${pendingUpdate.version} available`, `发现新版本 v${pendingUpdate.version}`),
+        detail: M(`You are on v${app.getVersion()}. "Download" opens the release page; replace the old app in /Applications.`, `当前版本 v${app.getVersion()}。点「去下载」打开发布页，下载后替换 /Applications 里的旧版即可。`),
       });
       if (c === 0) shell.openExternal(pendingUpdate.url);
     } else {
       dialog.showMessageBoxSync(owner, {
-        type: 'info', buttons: [M('好', 'OK')], message: M('已是最新版本', 'You are up to date'),
-        detail: M(`当前版本 v${app.getVersion()} 就是最新发布版。`, `v${app.getVersion()} is the latest release.`),
+        type: 'info', buttons: [M('OK', '好')], message: M('You are up to date', '已是最新版本'),
+        detail: M(`v${app.getVersion()} is the latest release.`, `当前版本 v${app.getVersion()} 就是最新发布版。`),
       });
     }
   }
@@ -195,42 +195,46 @@ ipcMain.handle('update:open', (e, { url }) => { if (/^https:\/\/github\.com\//.t
 ipcMain.handle('update:get', () => pendingUpdate);
 
 // 界面语言：用户手动选过的存在 ~/.fanbox/config.json（渲染层切换时写入），没选过跟随系统
+// 原生菜单维持 zh/en 二元：custom:<id> 按语言包声明的 langTag 映射（zh* → zh，否则 en）
 function uiLang() {
   try {
     const c = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.fanbox', 'config.json'), 'utf8'));
     if (c.lang === 'zh' || c.lang === 'en') return c.lang;
+    if (typeof c.lang === 'string' && c.lang.startsWith('custom:')) {
+      return String(c.langTag || '').toLowerCase().startsWith('zh') ? 'zh' : 'en';
+    }
   } catch { /* 没配置过 */ }
   return String(app.getLocale() || '').toLowerCase().startsWith('zh') ? 'zh' : 'en';
 }
-const M = (zh, en) => (uiLang() === 'zh' ? zh : en);
+const M = (en, zh) => (uiLang() === 'zh' ? zh : en);
 
 // 原生菜单——关键是 Edit role，终端里的 ⌘C/⌘V 才生效
 function buildMenu() {
   const isMac = process.platform === 'darwin';
   const template = [
     ...(isMac ? [{ label: 'FanBox', submenu: [
-      { role: 'about', label: M('关于 FanBox', 'About FanBox') },
-      { label: M('检查更新…', 'Check for Updates…'), click: () => checkUpdate({ manual: true }) },
+      { role: 'about', label: M('About FanBox', '关于 FanBox') },
+      { label: M('Check for Updates…', '检查更新…'), click: () => checkUpdate({ manual: true }) },
       { type: 'separator' },
-      { role: 'hide', label: M('隐藏 FanBox', 'Hide FanBox') }, { role: 'hideOthers', label: M('隐藏其他', 'Hide Others') }, { role: 'unhide', label: M('全部显示', 'Show All') },
+      { role: 'hide', label: M('Hide FanBox', '隐藏 FanBox') }, { role: 'hideOthers', label: M('Hide Others', '隐藏其他') }, { role: 'unhide', label: M('Show All', '全部显示') },
       { type: 'separator' },
-      { role: 'quit', label: M('退出 FanBox', 'Quit FanBox') },
+      { role: 'quit', label: M('Quit FanBox', '退出 FanBox') },
     ] }] : []),
-    { label: M('文件', 'File'), submenu: [
-      ...(isMac ? [] : [{ label: M('检查更新…', 'Check for Updates…'), click: () => checkUpdate({ manual: true }) }, { type: 'separator' }]),
+    { label: M('File', '文件'), submenu: [
+      ...(isMac ? [] : [{ label: M('Check for Updates…', '检查更新…'), click: () => checkUpdate({ manual: true }) }, { type: 'separator' }]),
       isMac ? { role: 'close' } : { role: 'quit' },
     ] },
-    { label: M('编辑', 'Edit'), submenu: [
-      { role: 'undo', label: M('撤销', 'Undo') }, { role: 'redo', label: M('重做', 'Redo') }, { type: 'separator' },
-      { role: 'cut', label: M('剪切', 'Cut') }, { role: 'copy', label: M('复制', 'Copy') }, { role: 'paste', label: M('粘贴', 'Paste') },
-      { role: 'selectAll', label: M('全选', 'Select All') },
+    { label: M('Edit', '编辑'), submenu: [
+      { role: 'undo', label: M('Undo', '撤销') }, { role: 'redo', label: M('Redo', '重做') }, { type: 'separator' },
+      { role: 'cut', label: M('Cut', '剪切') }, { role: 'copy', label: M('Copy', '复制') }, { role: 'paste', label: M('Paste', '粘贴') },
+      { role: 'selectAll', label: M('Select All', '全选') },
     ] },
-    { label: M('视图', 'View'), submenu: [
-      { role: 'reload', label: M('重新加载', 'Reload') }, { role: 'toggleDevTools', label: M('开发者工具', 'Developer Tools') },
+    { label: M('View', '视图'), submenu: [
+      { role: 'reload', label: M('Reload', '重新加载') }, { role: 'toggleDevTools', label: M('Developer Tools', '开发者工具') },
       { type: 'separator' }, { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' },
-      { type: 'separator' }, { role: 'togglefullscreen', label: M('全屏', 'Full Screen') },
+      { type: 'separator' }, { role: 'togglefullscreen', label: M('Full Screen', '全屏') },
     ] },
-    { role: 'window', label: M('窗口', 'Window'), submenu: [{ role: 'minimize', label: M('最小化', 'Minimize') }, { role: 'zoom' }] },
+    { role: 'window', label: M('Window', '窗口'), submenu: [{ role: 'minimize', label: M('Minimize', '最小化') }, { role: 'zoom' }] },
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
@@ -242,11 +246,11 @@ app.on('before-quit', (e) => {
   e.preventDefault();
   const choice = dialog.showMessageBoxSync(win && !win.isDestroyed() ? win : undefined, {
     type: 'warning',
-    buttons: [M('取消', 'Cancel'), M('退出', 'Quit')],
+    buttons: [M('Cancel', '取消'), M('Quit', '退出')],
     defaultId: 0,
     cancelId: 0,
-    message: M(`还有 ${terminals.size} 个终端会话在运行`, `${terminals.size} terminal session(s) still running`),
-    detail: M('退出会终止正在运行的 agent 任务，确定退出？', 'Quitting will terminate running agent tasks. Quit anyway?'),
+    message: M(`${terminals.size} terminal session(s) still running`, `还有 ${terminals.size} 个终端会话在运行`),
+    detail: M('Quitting will terminate running agent tasks. Quit anyway?', '退出会终止正在运行的 agent 任务，确定退出？'),
   });
   if (choice === 1) { quitConfirmed = true; app.quit(); }
 });
@@ -258,7 +262,7 @@ app.on('window-all-closed', () => {
 
 // ---------- 终端 IPC（node-pty）----------
 ipcMain.handle('pty:spawn', (e, { id, cwd, cols, rows }) => {
-  if (!pty) return { ok: false, error: 'node-pty 未编译，跑：npm run rebuild' };
+  if (!pty) return { ok: false, error: 'node-pty is not compiled — run: npm run rebuild' };
   const shellPath = process.env.SHELL || (process.platform === 'win32' ? 'powershell.exe' : '/bin/zsh');
   const startCwd = cwd && fs.existsSync(cwd) ? cwd : os.homedir();
   // GUI 启动的 app 不继承 shell 的 locale，zsh 会把中文路径按字节转义成 \M-^@ 乱码 → 兜底 UTF-8
@@ -284,7 +288,7 @@ ipcMain.handle('pty:spawn', (e, { id, cwd, cols, rows }) => {
 });
 // ---------- 剪贴板：复制图片本体 / 复制文件（访达可粘贴）----------
 ipcMain.handle('clip:image', (e, { path: p }) => {
-  try { const img = nativeImage.createFromPath(p); if (img.isEmpty()) return { ok: false, error: '不是可读图片' }; clipboard.writeImage(img); return { ok: true }; }
+  try { const img = nativeImage.createFromPath(p); if (img.isEmpty()) return { ok: false, error: 'Not a readable image' }; clipboard.writeImage(img); return { ok: true }; }
   catch (err) { return { ok: false, error: err.message }; }
 });
 ipcMain.handle('clip:file', (e, { path: p }) => new Promise((resolve) => {
@@ -298,7 +302,7 @@ ipcMain.handle('drop:save', (e, { name, buf }) => {
   try {
     const dir = path.join(app.getPath('temp'), 'fanbox-drops');
     fs.mkdirSync(dir, { recursive: true });
-    const safe = String(name || '拖入文件.png').replace(/[/\\:]/g, '_');
+    const safe = String(name || 'dropped-file.png').replace(/[/\\:]/g, '_');
     let dest = path.join(dir, safe);
     if (fs.existsSync(dest)) dest = path.join(dir, `${Date.now()}-${safe}`);
     fs.writeFileSync(dest, Buffer.from(buf));

@@ -11,6 +11,17 @@
 
 ## [Unreleased]
 
+### Changed
+- **界面源语言从简体中文翻转为英文（English base）**：代码与 HTML 内的 UI 字串全部改为英文原文，简体中文转为内建词典（369 词条 + 71 条动态规则，含单复数）；既有简中用户体验不变（zh 偏好语义不变、无偏好的 zh 系统仍默认简中）。动态文案（相对时间、文件计数、会话摘要、用量快照等）英文模板含正确单复数
+- **语言包格式 breaking change**：schema 新增必填 `base: "en"` 字段，词典 key 改为英文源文；旧 key 空间（简中 key）的语言包导入时被明确拒收并提示更新。官方繁中包已按新格式重生（369 词条全覆盖 + 96 条规则，旧版 38 条简繁同形省略词条这次全数补齐——fallback 语言已从简中变为英文，省略即漏翻）；语言包模板与制作文档（lang-packs/README.md）改以英文为主，面向第三方译者
+
+### Added
+- 语言包匯入：侧栏语言切换从「中/EN 二元开关」升级为弹出选单，新增「导入语言包…」——选一个 JSON 语言包（`{id, name, lang, dict, rules?}`，繁中包随仓库附在 `lang-packs/zh-TW.json`）即持久化到 `~/.fanbox/lang-packs/`，同 id 重新导入即覆盖更新（不满意的词条改 JSON 重导即可，不用等发版）。配套 server 端点：`POST /api/lang-pack/import`（schema 校验 + 1MB 上限 + id 防穿越）、`GET /api/lang-packs`、`GET /api/lang-pack?id=`
+- 繁体中文官方语言包 `lang-packs/zh-TW.json`：291 词条按台湾用语在地化（文件→檔案、搜索→搜尋、保存→儲存……），71 条动态文案规则（相对时间、文件计数、会话摘要等）全量移植，非单纯简繁字转
+
+### Removed
+- 「索引」（editorial）皮肤下架，皮肤保留 档案（warm）与 终端（Volt）两套；曾选过索引皮肤的用户下次启动自动落回终端皮肤
+
 ## [1.8.0] - 2026-06-12
 
 ### Added
@@ -26,7 +37,6 @@
 
 ### Fixed
 - 打开文件就误亮「改」徽标：macOS 打开文件时 LaunchServices 会写 `com.apple.lastuseddate#PS` 扩展属性，FSEvents 据此连发事件，内容没动也被当成 agent 改动。改为自己发起的打开记下路径，3 秒内该文件的变更事件按噪声整条丢弃（不点卡、不进变更收件箱、不触发刷新）；agent 真改/移动文件的徽标不受影响
-
 
 ## [1.7.2] - 2026-06-11
 

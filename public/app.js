@@ -72,13 +72,6 @@ function iconColorFor(e) {
     if (['csv', 'tsv', 'sql'].includes(ex)) return '#8a7a48';
     return '#9b8b6e';
   }
-  if (t === 'editorial') {
-    if (e.isDir) return '#0a0a0a';
-    if (['html', 'htm'].includes(ex)) return '#ff433d';
-    if (['md', 'markdown'].includes(ex)) return '#0000ee';
-    if (e.kind === 'data' || ['csv', 'tsv'].includes(ex)) return '#00a33e';
-    return '#0a0a0a';
-  }
   // terminal：暖色多彩，文件夹用中性灰绿不抢 volt
   if (e.isDir) return '#9aa08a';
   if (EXT_KIND[ex]) return EXT_KIND[ex][1];
@@ -207,10 +200,10 @@ function fmtTime(ms) {
   if (!ms) return '';
   const d = new Date(ms);
   const diff = Date.now() - ms;
-  if (diff < 60000) return '刚刚';
-  if (diff < 3600000) return `${Math.floor(diff / 60000)} 分钟前`;
-  if (diff < 86400000) return `${Math.floor(diff / 3600000)} 小时前`;
-  if (diff < 604800000) return `${Math.floor(diff / 86400000)} 天前`;
+  if (diff < 60000) return 'just now';
+  if (diff < 3600000) { const n = Math.floor(diff / 60000); return `${n} minute${n === 1 ? '' : 's'} ago`; }
+  if (diff < 86400000) { const n = Math.floor(diff / 3600000); return `${n} hour${n === 1 ? '' : 's'} ago`; }
+  if (diff < 604800000) { const n = Math.floor(diff / 86400000); return `${n} day${n === 1 ? '' : 's'} ago`; }
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 // 跨平台路径处理：用服务端返回的分隔符
@@ -242,7 +235,7 @@ async function guardDirty() {
     return true;
   }
   if (dirtyCheck && dirtyCheck()) {
-    const ok = await confirmDialog('当前编辑有未保存的改动，放弃并离开？');
+    const ok = await confirmDialog('You have unsaved edits — discard and leave?');
     if (!ok) return false;
   }
   dirtyCheck = null;
@@ -255,7 +248,7 @@ async function navigate(p, pushHistory = true) {
   if (!await guardDirty()) return;
   try {
     const data = await api('/api/list?path=' + encodeURIComponent(p));
-    if (data.error) { toast('无法打开：' + data.error, true); return; }
+    if (data.error) { toast("Can't open: " + data.error, true); return; }
     if (pushHistory && state.cwd) state.history.push(state.cwd);
     state.cwd = data.path;
     state.entries = data.entries;
@@ -269,9 +262,9 @@ async function navigate(p, pushHistory = true) {
     renderRootsActive();
     // 联动：监听此目录 + 各终端项目目录的文件变化（agent 改文件→自动刷新）
     updateWatches();
-    // 手动跳目录 = 接管浏览，文件跟随让位（跟随自己发起的导航除外）
-    if (follow.on && !follow.navving) setFileFollow(false, '手动接管，文件跟随已停');
-  } catch (e) { toast('打开失败', true); }
+    // Manual directory navigation = user takes over browsing, file-follow yields (except navigations initiated by follow itself)
+    if (follow.on && !follow.navving) setFileFollow(false, 'Manual takeover, file follow stopped');
+  } catch (e) { toast('Open failed', true); }
 }
 // 汇总当前要监听的目录：浏览目录 + 每个终端会话的项目目录，发给主进程做增量监听
 function updateWatches() {
@@ -296,8 +289,8 @@ function render() {
 function renderBreadcrumb() {
   const bc = $('#breadcrumb');
   bc.innerHTML = '';
-  if (state.skillsMode) { bc.innerHTML = `<span class="crumb last">Skills 透视</span>`; return; }
-  if (state.recentMode) { bc.innerHTML = `<span class="crumb last">${ic('clock', 'currentColor', 15)} 最近修改的文件</span>`; return; }
+  if (state.skillsMode) { bc.innerHTML = `<span class="crumb last">Skills overview</span>`; return; }
+  if (state.recentMode) { bc.innerHTML = `<span class="crumb last">${ic('clock', 'currentColor', 15)} Recently modified</span>`; return; }
   (state.breadcrumb || []).forEach((c, i, arr) => {
     if (i > 0) { const s = document.createElement('span'); s.className = 'sep'; s.textContent = '›'; bc.appendChild(s); }
     const el = document.createElement('span');
@@ -317,14 +310,14 @@ function renderBreadcrumb() {
       const d = document.createElement('span');
       d.className = 'crumb-proj';
       d.style.background = `hsl(${term.hueOf(ts.cwd)} 62% 48%)`;
-      d.title = '终端「' + (ts.title || '') + '」正在这个项目里干活';
+      d.title = 'Terminal "' + (ts.title || '') + '" is working in this project';
       bc.appendChild(d);
     }
   }
   if (state.project) {
     const b = document.createElement('span');
     b.className = 'proj-badge';
-    b.textContent = state.project.toUpperCase() + ' 项目';
+    b.textContent = state.project.toUpperCase() + ' project';
     bc.appendChild(b);
   }
   // 滚到末尾，确保被挤压时也能看到当前所在目录（而非根目录）
@@ -350,7 +343,7 @@ function renderStatusbar() {
   const files = list.length - dirs;
   const bytes = list.reduce((a, e) => a + (e.isDir ? 0 : e.size || 0), 0);
   sb.classList.remove('hidden');
-  sb.innerHTML = `<span>${list.length} 项${dirs ? ` · ${dirs} 文件夹` : ''}${files ? ` · ${files} 文件 ${fmtSize(bytes)}` : ''}</span><span class="sb-links">${state.project ? '<a id="sb-rel" title="版本号→CHANGELOG→打包→push→Release 一条龙，在终端跑">发版</a>' : ''}<a id="sb-mem" title="这个文件夹里 AI 干过什么：历史会话、改过的文件、一键续上">项目记忆</a><a id="sb-du" title="算上子目录的真实磁盘占用">占用透视</a></span>`;
+  sb.innerHTML = `<span>${list.length} item${list.length === 1 ? '' : 's'}${dirs ? ` · ${dirs} folder${dirs === 1 ? '' : 's'}` : ''}${files ? ` · ${files} file${files === 1 ? '' : 's'} ${fmtSize(bytes)}` : ''}</span><span class="sb-links">${state.project ? '<a id="sb-rel" title="Version bump → CHANGELOG → build → push → Release, end to end in the terminal">Release</a>' : ''}<a id="sb-mem" title="What AI has done in this folder: past sessions, changed files, one-click resume">Project memory</a><a id="sb-du" title="True disk usage including subfolders">Disk usage</a></span>`;
   $('#sb-du').onclick = () => diskPanel(state.cwd);
   $('#sb-mem').onclick = () => memoryPanel(state.cwd);
   const rel = $('#sb-rel'); if (rel) rel.onclick = () => releasePanel();
@@ -362,7 +355,7 @@ function renderFiles() {
   state.visible = list;
   renderStatusbar();
   if (!list.length) {
-    const emptyMsg = state.recentMode ? '没找到最近修改的文件' : '这个文件夹是空的';
+    const emptyMsg = state.recentMode ? 'No recently modified files' : 'This folder is empty';
     const emptyIc = state.recentMode ? 'clock' : 'inbox';
     area.innerHTML = `<div class="empty-state"><div class="big">${ic(emptyIc, 'currentColor', 48)}</div>${emptyMsg}</div>`;
     return;
@@ -373,7 +366,7 @@ function renderFiles() {
     wrap.className = 'list';
     const head = document.createElement('div');
     head.className = 'row list-head';
-    head.innerHTML = `<div></div><div>名称</div><div>修改时间</div><div>大小</div><div></div>`;
+    head.innerHTML = `<div></div><div>Name</div><div>Modified</div><div>Size</div><div></div>`;
     wrap.appendChild(head);
     list.forEach((e, i) => wrap.appendChild(listRow(e, i)));
     area.innerHTML = '';
@@ -402,7 +395,7 @@ function measureCols() {
 }
 function favBtn(e) {
   const on = isFav(e.path);
-  return `<span class="fav-btn ${on ? 'on' : ''}" title="收藏">${svgWrap(SVG.star, 'currentColor', 15, on)}</span>`;
+  return `<span class="fav-btn ${on ? 'on' : ''}" title="Favorite">${svgWrap(SVG.star, 'currentColor', 15, on)}</span>`;
 }
 function thumbHtml(e) {
   // 关键性能修复：用缩略图端点（sips/qlmanage 缓存小图），不再把原图/原视频整文件拉进来解码
@@ -433,7 +426,7 @@ function gridItem(e, i) {
   el.className = 'item' + (e.isDir ? ' is-dir' : ' is-file') + (e.hidden ? ' hidden-file' : '') + (state.selected === e.path ? ' selected' : '') + (chg ? ' changed' : '');
   el.dataset.idx = i;
   el.dataset.path = e.path;
-  if (chg) { el.dataset.changed = chg.count > 1 ? '改·' + chg.count : '改'; el.style.setProperty('--heat', Math.min(1, 0.4 + chg.count * 0.12).toFixed(2)); if (chg.files.size) el.title = '刚变更：\n' + [...chg.files].join('\n'); }
+  if (chg) { el.dataset.changed = chg.count > 1 ? 'edited·' + chg.count : 'edited'; el.style.setProperty('--heat', Math.min(1, 0.4 + chg.count * 0.12).toFixed(2)); if (chg.files.size) el.title = 'Just changed:\n' + [...chg.files].join('\n'); }
   el.innerHTML = `<div class="icon" style="--tint:${iconColorFor(e)}">${thumbHtml(e)}${projBadge(e)}</div><div class="fname">${escapeHtml(e.name)}</div>${favBtn(e)}`;
   bindItem(el, e);
   return el;
@@ -444,7 +437,7 @@ function listRow(e, i) {
   el.className = 'row' + (e.isDir ? ' is-dir' : ' is-file') + (e.hidden ? ' hidden-file' : '') + (state.selected === e.path ? ' selected' : '') + (chgR ? ' changed' : '');
   el.dataset.idx = i;
   el.dataset.path = e.path;
-  if (chgR) { el.dataset.changed = chgR.count > 1 ? '改·' + chgR.count : '改'; el.style.setProperty('--heat', Math.min(1, 0.4 + chgR.count * 0.12).toFixed(2)); if (chgR.files.size) el.title = '刚变更：\n' + [...chgR.files].join('\n'); }
+  if (chgR) { el.dataset.changed = chgR.count > 1 ? 'edited·' + chgR.count : 'edited'; el.style.setProperty('--heat', Math.min(1, 0.4 + chgR.count * 0.12).toFixed(2)); if (chgR.files.size) el.title = 'Just changed:\n' + [...chgR.files].join('\n'); }
   // 最近修改是跨目录列表，名称后缀显示来源目录，方便区分同名文件
   const dirHint = state.recentMode ? ` <span class="row-dir">· ${escapeHtml(tilde(e.dir || dirOf(e.path)))}</span>` : '';
   el.innerHTML = `<div class="icon">${(e.kind === 'image' || e.kind === 'video') ? `<img class="thumb-sm" loading="lazy" decoding="async" src="/api/thumb?path=${encodeURIComponent(e.path)}&w=96&v=${e.mtime || 0}" onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'svg-icon',innerHTML:this.dataset.fb||''}))" data-fb='${escapeHtml(iconSvg(e, 18))}'>` : `<span class="svg-icon">${iconSvg(e, 18)}</span>`}</div>
@@ -530,7 +523,7 @@ async function openPreview(e) {
   showPreviewPanel();
   $('#preview-title').textContent = e.name;
   const body = $('#preview-body');
-  body.innerHTML = '<div class="cmdk-loading">加载中…</div>';
+  body.innerHTML = '<div class="cmdk-loading">Loading…</div>';
   renderPreviewActions(e);
   renderPreviewFoot(e);
   const k = e.kind;
@@ -539,7 +532,7 @@ async function openPreview(e) {
     const exi = (e.name.split('.').pop() || '').toLowerCase();
     const nativeImg = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico', 'avif'].includes(exi);
     const fallback = nativeImg ? `/api/raw?path=${encodeURIComponent(e.path)}&v=${e.mtime || 0}` : `/api/thumb?path=${encodeURIComponent(e.path)}&w=1600&v=${e.mtime || 0}`;
-    body.innerHTML = `<img class="pv-img" src="/api/thumb?path=${encodeURIComponent(e.path)}&w=1000&v=${e.mtime || 0}" title="点击放大" onerror="this.onerror=null;this.src='${fallback}'">`;
+    body.innerHTML = `<img class="pv-img" src="/api/thumb?path=${encodeURIComponent(e.path)}&w=1000&v=${e.mtime || 0}" title="Click to zoom" onerror="this.onerror=null;this.src='${fallback}'">`;
     body.querySelector('.pv-img').onclick = () => lightbox(e.path, nativeImg, e.mtime);
   } else if (k === 'video') {
     body.innerHTML = `<video controls src="/api/raw?path=${encodeURIComponent(e.path)}"></video>`;
@@ -553,14 +546,15 @@ async function openPreview(e) {
   } else if (k === 'archive') {
     const d = await api('/api/archive?path=' + encodeURIComponent(e.path));
     if (!d.ok) {
-      body.innerHTML = `<div class="empty-state"><div class="big">${iconSvg(e, 48)}</div>${escapeHtml(d.error || '无法读取')}<br><br>${fmtSize(e.size)}</div>`;
+      body.innerHTML = `<div class="empty-state"><div class="big">${iconSvg(e, 48)}</div>${escapeHtml(d.error || "Can't read")}<br><br>${fmtSize(e.size)}</div>`;
     } else {
       const rows = d.entries.map((en) =>
         `<div class="arch-row${en.name.endsWith('/') ? ' is-dir' : ''}"><span class="arch-name">${escapeHtml(en.name)}</span><span class="arch-size">${en.size != null ? fmtSize(en.size) : ''}</span></div>`).join('');
-      body.innerHTML = `<div class="preview-meta"><span>${fmtSize(e.size)}</span><span>${d.entries.length}${d.truncated ? '+' : ''} 项</span></div><div class="arch-list">${rows}</div>`;
+      const n = d.entries.length;
+      body.innerHTML = `<div class="preview-meta"><span>${fmtSize(e.size)}</span><span>${n}${d.truncated ? '+' : ''} item${(d.truncated || n !== 1) ? 's' : ''}</span></div><div class="arch-list">${rows}</div>`;
     }
   } else {
-    body.innerHTML = `<div class="empty-state"><div class="big">${iconSvg(e, 48)}</div>这个文件类型无法预览<br><br>${fmtSize(e.size)}</div>`;
+    body.innerHTML = `<div class="empty-state"><div class="big">${iconSvg(e, 48)}</div>Can't preview this file type<br><br>${fmtSize(e.size)}</div>`;
   }
 }
 function renderTextPreview(data) {
@@ -587,7 +581,7 @@ function renderTextPreview(data) {
 }
 function csvTable(text, delim) {
   const rows = text.split('\n').filter((r) => r.trim()).slice(0, 500).map((r) => r.split(delim));
-  if (!rows.length) return '<div class="empty-state">空表格</div>';
+  if (!rows.length) return '<div class="empty-state">Empty table</div>';
   let h = '<div class="csv-wrap"><table class="csv-table"><thead><tr>';
   rows[0].forEach((c) => { h += `<th>${escapeHtml(c)}</th>`; });
   h += '</tr></thead><tbody>';
@@ -606,7 +600,7 @@ function fsUrl(p, mtime) {
 function renderHtmlPreview(data, meta) {
   const body = $('#preview-body');
   body.innerHTML = meta +
-    `<div class="pv-toolbar"><button id="html-toggle" class="ghost-btn">查看源码</button><button id="html-browser" class="ghost-btn">${ic('globe', 'currentColor', 13)} 浏览器打开（看完整交互）</button></div>` +
+    `<div class="pv-toolbar"><button id="html-toggle" class="ghost-btn">View source</button><button id="html-browser" class="ghost-btn">${ic('globe', 'currentColor', 13)} Open in browser (full interactivity)</button></div>` +
     // src 指到 /fs/ 路径镜像端点，页面里的相对引用（./img.png、子目录）才能按所在目录解析；
     // srcdoc 没有 base URL，本地图片/CSS 全是裂的。
     // 只给 allow-scripts，不给 allow-same-origin：sandbox 让文档落到 opaque origin，
@@ -622,7 +616,7 @@ function renderHtmlPreview(data, meta) {
       pre.innerHTML = `<code class="language-html">${escapeHtml(data.content || '')}</code>`;
       body.querySelector('.iframe-preview').replaceWith(pre);
       if (window.hljs) pre.querySelectorAll('code').forEach((b) => { try { window.hljs.highlightElement(b); } catch {} });
-      $('#html-toggle').textContent = '渲染预览';
+      $('#html-toggle').textContent = 'Rendered preview';
     } else { renderHtmlPreview(data, meta); }
   };
 }
@@ -630,20 +624,20 @@ function renderHtmlPreview(data, meta) {
 async function showDiff(e) {
   if (follow.on) setFileFollow(false, '手动接管，文件跟随已停');
   const data = await api('/api/git-file?path=' + encodeURIComponent(e.path));
-  if (!data.isRepo) { toast('该文件不在 git 仓库里', true); return; }
-  if (!data.diffable) { toast('该类型不支持 diff', true); return; }
-  if (!data.isNew && (data.original || '') === (data.modified || '')) { toast('与 HEAD 无差异'); return; }
-  if (!await mona.load()) { toast('编辑器未就绪', true); return; }
+  if (!data.isRepo) { toast('File is not in a git repo', true); return; }
+  if (!data.diffable) { toast('This file type cannot be diffed', true); return; }
+  if (!data.isNew && (data.original || '') === (data.modified || '')) { toast('No changes vs HEAD'); return; }
+  if (!await mona.load()) { toast('Editor not ready', true); return; }
   if (!await guardDirty()) return;
   mona.disposeIfAny(); crepe.disposeIfAny(); imgEditState = null;
   showPreviewPanel();
   applySelection(e.path);
-  $('#preview-title').textContent = (data.isNew ? '新增 · ' : '改动 · ') + e.name;
+  $('#preview-title').textContent = (data.isNew ? 'Added · ' : 'Changes · ') + e.name;
   renderPreviewActions(e);
   renderPreviewFoot(e);
   const body = $('#preview-body');
   body.innerHTML =
-    `<div class="editor-bar"><span class="editor-hint">${data.isNew ? '新文件（HEAD 中不存在）' : '左：HEAD　·　右：当前工作区'} · 只读</span><button id="diff-close" class="ghost-btn">返回预览</button></div>` +
+    `<div class="editor-bar"><span class="editor-hint">${data.isNew ? 'New file (not in HEAD)' : 'Left: HEAD　·　Right: working tree'} · read-only</span><button id="diff-close" class="ghost-btn">Back to preview</button></div>` +
     `<div id="ed-host" class="mona-host"></div>`;
   mona.openDiff($('#ed-host'), data.original, data.modified, (e.name.split('.').pop() || '').toLowerCase());
   $('#diff-close').onclick = () => openPreview(e);
@@ -654,15 +648,15 @@ function renderPreviewActions(e) {
   const clip = window.fanboxClipboard;
   // 图标为主、文字精简：主操作「打开」留字，其余只留图标 + tooltip
   const acts = [
-    { icon: ic('link', 'currentColor', 14), label: '打开', title: '默认应用打开', cls: 'primary', fn: () => openWith(e.path, 'default') },
-    ...(e.kind === 'text' && !isMdName(e.name) ? [{ icon: ic('edit3', 'currentColor', 15), title: '编辑文本', fn: () => enterEditMode(e) }] : []), // md 预览即编辑，无需入口
-    ...(e.kind === 'text' ? [{ icon: ic('gitbranch', 'currentColor', 15), title: '查看改动（HEAD vs 当前）', fn: () => showDiff(e) }] : []),
-    ...(e.kind === 'image' ? [{ icon: ic('edit3', 'currentColor', 15), title: '编辑图片', fn: () => enterImageEdit(e) }] : []),
-    { icon: ic('term', 'currentColor', 15), title: '在编辑器打开', fn: () => openWith(e.path, 'editor') },
-    { icon: ic('folder', 'currentColor', 15), title: '在访达显示', fn: () => openWith(e.path, 'reveal') },
-    ...(e.kind === 'image' && clip ? [{ icon: ic('image', 'currentColor', 15), title: '复制图片（可粘贴到其它应用）', fn: () => copyImage(e.path) }] : []),
-    ...(clip ? [{ icon: ic('copy', 'currentColor', 15), title: '复制文件（访达里可粘贴）', fn: () => copyFile(e.path) }] : []),
-    { icon: ic('clip', 'currentColor', 15), title: '复制路径', fn: () => copyPath(e.path) },
+    { icon: ic('link', 'currentColor', 14), label: 'Open', title: 'Open with default app', cls: 'primary', fn: () => openWith(e.path, 'default') },
+    ...(e.kind === 'text' && !isMdName(e.name) ? [{ icon: ic('edit3', 'currentColor', 15), title: 'Edit text', fn: () => enterEditMode(e) }] : []), // md 预览即编辑，无需入口
+    ...(e.kind === 'text' ? [{ icon: ic('gitbranch', 'currentColor', 15), title: 'View changes (HEAD vs current)', fn: () => showDiff(e) }] : []),
+    ...(e.kind === 'image' ? [{ icon: ic('edit3', 'currentColor', 15), title: 'Edit image', fn: () => enterImageEdit(e) }] : []),
+    { icon: ic('term', 'currentColor', 15), title: 'Open in editor', fn: () => openWith(e.path, 'editor') },
+    { icon: ic('folder', 'currentColor', 15), title: 'Show in Finder', fn: () => openWith(e.path, 'reveal') },
+    ...(e.kind === 'image' && clip ? [{ icon: ic('image', 'currentColor', 15), title: 'Copy image (paste into other apps)', fn: () => copyImage(e.path) }] : []),
+    ...(clip ? [{ icon: ic('copy', 'currentColor', 15), title: 'Copy file (paste in Finder)', fn: () => copyFile(e.path) }] : []),
+    { icon: ic('clip', 'currentColor', 15), title: 'Copy path', fn: () => copyPath(e.path) },
   ];
   acts.forEach((a) => {
     const b = document.createElement('button');
@@ -684,10 +678,10 @@ function renderPreviewFoot(e) {
   const f = $('#preview-foot');
   if (!f) return;
   if (!e || e.isDir) { f.innerHTML = ''; return; }
-  f.innerHTML = `<span title="大小">${e.size ? fmtSize(e.size) : '0 B'}</span><span title="创建时间">创建 ${fmtDateTime(e.btime)}</span><span title="修改时间">改 ${fmtDateTime(e.mtime)}</span>`;
+  f.innerHTML = `<span title="Size">${e.size ? fmtSize(e.size) : '0 B'}</span><span title="Created">Created ${fmtDateTime(e.btime)}</span><span title="Modified">Modified ${fmtDateTime(e.mtime)}</span>`;
 }
-async function copyImage(p) { const r = await window.fanboxClipboard.copyImage(p); toast(r.ok ? '已复制图片，可粘贴到其它应用' : '复制图片失败：' + (r.error || ''), !r.ok); }
-async function copyFile(p) { const r = await window.fanboxClipboard.copyFile(p); toast(r.ok ? '已复制文件，可在访达里粘贴' : '复制文件失败', !r.ok); }
+async function copyImage(p) { const r = await window.fanboxClipboard.copyImage(p); toast(r.ok ? 'Image copied — paste it into other apps' : 'Copy image failed: ' + (r.error || ''), !r.ok); }
+async function copyFile(p) { const r = await window.fanboxClipboard.copyFile(p); toast(r.ok ? 'File copied — paste it in Finder' : 'Copy file failed', !r.ok); }
 async function closePreview() {
   if (!await guardDirty()) return;
   mona.disposeIfAny(); crepe.disposeIfAny(); imgEditState = null;
@@ -703,7 +697,7 @@ function lightbox(path, nativeImg, mtime) {
   const src = nativeImg ? `/api/raw?path=${encodeURIComponent(path)}&v=${mtime || 0}` : `/api/thumb?path=${encodeURIComponent(path)}&w=1600&v=${mtime || 0}`;
   const ov = document.createElement('div');
   ov.className = 'lightbox';
-  ov.innerHTML = `<img src="${src}"><div class="lb-hint">点击空白处关闭 · 滚轮缩放</div>`;
+  ov.innerHTML = `<img src="${src}"><div class="lb-hint">Click outside to close · scroll to zoom</div>`;
   let scale = 1;
   const img = ov.querySelector('img');
   ov.onclick = (ev) => { if (ev.target === ov) ov.remove(); };
@@ -751,12 +745,12 @@ function bindSelectionToTerminal() {
     const rect = sel.getRangeAt(0).getBoundingClientRect();
     if (!rect || (!rect.width && !rect.height)) { hide(); return; }
     if (!btn) { btn = document.createElement('button'); btn.className = 'sel-send'; document.body.appendChild(btn); }
-    btn.innerHTML = `${ic('term', 'currentColor', 13)} 发到终端`;
+    btn.innerHTML = `${ic('term', 'currentColor', 13)} Send to terminal`;
     const top = Math.min(window.innerHeight - 44, rect.bottom + 8);
     btn.style.top = top + 'px';
     btn.style.left = Math.max(8, Math.min(window.innerWidth - 130, rect.left)) + 'px';
     btn.onmousedown = (ev) => ev.preventDefault(); // 别让点击清掉选区
-    btn.onclick = () => { const r = btn.getBoundingClientRect(); flingToTerminal(text, r); term.sendContext(text, state.selected); hide(); toast('已甩进终端，补一句要求再回车'); };
+    btn.onclick = () => { const r = btn.getBoundingClientRect(); flingToTerminal(text, r); term.sendContext(text, state.selected); hide(); toast('Flung into the terminal — add your ask and press Enter'); };
   };
   body.addEventListener('mouseup', () => setTimeout(show, 10));
   body.addEventListener('scroll', hide, true);
@@ -836,18 +830,18 @@ async function enterImageEdit(e) {
   mona.disposeIfAny(); crepe.disposeIfAny();
   showPreviewPanel();
   applySelection(e.path);
-  $('#preview-title').textContent = '编辑 · ' + e.name;
+  $('#preview-title').textContent = 'Edit · ' + e.name;
   $('#preview-actions').innerHTML = '';
   renderPreviewFoot(null);
   const body = $('#preview-body');
-  body.innerHTML = '<div class="cmdk-loading">加载图片…</div>';
+  body.innerHTML = '<div class="cmdk-loading">Loading image…</div>';
   const img = new Image();
   img.onload = () => {
     // 大图 OOM 守卫：canvas 按 RGBA 估算，超 60MP（~240MB）拒绝编辑，回退预览
-    if (img.naturalWidth * img.naturalHeight > 60e6) { toast('图片过大（>60MP），暂不支持编辑，请先压缩', true); openPreview(e); return; }
+    if (img.naturalWidth * img.naturalHeight > 60e6) { toast('Image too large to edit (>60MP) — compress it first', true); openPreview(e); return; }
     buildImageEditor(e, img);
   };
-  img.onerror = () => { toast('图片加载失败', true); openPreview(e); };
+  img.onerror = () => { toast('Image failed to load', true); openPreview(e); };
   img.src = '/api/raw?path=' + encodeURIComponent(e.path) + '&v=' + (e.mtime || 0);
 }
 function ieSnapshot(st) { const c = document.createElement('canvas'); c.width = st.canvas.width; c.height = st.canvas.height; c.getContext('2d').drawImage(st.canvas, 0, 0); return c; }
@@ -885,25 +879,25 @@ function buildImageEditor(e, img) {
   body.innerHTML =
     `<div class="imgedit-tools">
       <div class="ie-seg" id="ie-tools">
-        ${ieToolBtn('pen', '自由画笔', '<path d="M3 21c0-3 2-5 5-6 2-.7 3-2 3.5-4M21 3c-1 4-3 7-6 9"/><path d="M11 11l2 2"/>', true)}
-        ${ieToolBtn('rect', '矩形框', '<rect x="4" y="6" width="16" height="12" rx="1.5"/>')}
-        ${ieToolBtn('line', '直线', '<line x1="5" y1="19" x2="19" y2="5"/>')}
-        ${ieToolBtn('arrow', '箭头', '<line x1="5" y1="19" x2="18" y2="6"/><polyline points="10.5 6 18 6 18 13.5"/>')}
-        ${ieToolBtn('text', '文字', '<polyline points="5 7 5 5 19 5 19 7"/><line x1="12" y1="5" x2="12" y2="19"/><line x1="9" y1="19" x2="15" y2="19"/>')}
-        ${ieToolBtn('mosaic', '打码', '<rect x="4" y="4" width="6.4" height="6.4"/><rect x="13.6" y="4" width="6.4" height="6.4"/><rect x="4" y="13.6" width="6.4" height="6.4"/><rect x="13.6" y="13.6" width="6.4" height="6.4"/>')}
+        ${ieToolBtn('pen', 'Freehand pen', '<path d="M3 21c0-3 2-5 5-6 2-.7 3-2 3.5-4M21 3c-1 4-3 7-6 9"/><path d="M11 11l2 2"/>', true)}
+        ${ieToolBtn('rect', 'Rectangle', '<rect x="4" y="6" width="16" height="12" rx="1.5"/>')}
+        ${ieToolBtn('line', 'Line', '<line x1="5" y1="19" x2="19" y2="5"/>')}
+        ${ieToolBtn('arrow', 'Arrow', '<line x1="5" y1="19" x2="18" y2="6"/><polyline points="10.5 6 18 6 18 13.5"/>')}
+        ${ieToolBtn('text', 'Text', '<polyline points="5 7 5 5 19 5 19 7"/><line x1="12" y1="5" x2="12" y2="19"/><line x1="9" y1="19" x2="15" y2="19"/>')}
+        ${ieToolBtn('mosaic', 'Pixelate', '<rect x="4" y="4" width="6.4" height="6.4"/><rect x="13.6" y="4" width="6.4" height="6.4"/><rect x="4" y="13.6" width="6.4" height="6.4"/><rect x="13.6" y="13.6" width="6.4" height="6.4"/>')}
       </div>
-      <input type="color" id="ie-color" value="#ff3b30" title="颜色">
-      <span class="ie-thick" title="粗细"><input type="range" id="ie-size" min="1" max="60" value="5"><i id="ie-dot"></i></span>
-      <button id="ie-undo" class="ghost-btn" title="撤销 ⌘Z">撤销</button>
+      <input type="color" id="ie-color" value="#ff3b30" title="Color">
+      <span class="ie-thick" title="Stroke width"><input type="range" id="ie-size" min="1" max="60" value="5"><i id="ie-dot"></i></span>
+      <button id="ie-undo" class="ghost-btn" title="Undo ⌘Z">Undo</button>
     </div>
     <div class="imgedit-canvas-wrap"><canvas id="ie-canvas"></canvas></div>
     <div class="imgedit-export">
-      <label>格式 <select id="ie-format"><option value="png">PNG</option><option value="jpeg">JPEG</option><option value="webp">WEBP</option></select></label>
-      <label>宽度 <input id="ie-width" type="number" min="16" step="1"></label>
-      <label id="ie-quality-wrap" style="display:none">质量 <input id="ie-quality" type="range" min="10" max="100" value="85"></label>
+      <label>Format <select id="ie-format"><option value="png">PNG</option><option value="jpeg">JPEG</option><option value="webp">WEBP</option></select></label>
+      <label>Width <input id="ie-width" type="number" min="16" step="1"></label>
+      <label id="ie-quality-wrap" style="display:none">Quality <input id="ie-quality" type="range" min="10" max="100" value="85"></label>
       <span class="ie-spacer"></span>
-      <button id="ie-saveas" class="ghost-btn">另存为</button>
-      <button id="ie-save" class="primary">保存</button>
+      <button id="ie-saveas" class="ghost-btn">Save As</button>
+      <button id="ie-save" class="primary">Save</button>
     </div>`;
   const canvas = $('#ie-canvas');
   canvas.width = img.naturalWidth; canvas.height = img.naturalHeight;
@@ -937,7 +931,7 @@ function bindImageEditor(st, toggleQ) {
   canvas.addEventListener('pointerdown', async (ev) => {
     const { x, y } = iePos(st, ev);
     if (st.tool === 'text') {
-      const txt = await inputDialog('添加文字', '', '输入文字');
+      const txt = await inputDialog('Add text', '', 'Type text');
       if (!txt) return;
       st.undo.push(ieSnapshot(st)); if (st.undo.length > 25) st.undo.shift();
       const c = st.ctx; c.save(); c.fillStyle = st.color; c.textBaseline = 'top';
@@ -977,7 +971,7 @@ function bindImageEditor(st, toggleQ) {
   $('#ie-save').onclick = () => ieSave(st, false);
   $('#ie-saveas').onclick = () => ieSave(st, true);
 }
-function ieUndo(st) { const snap = st.undo.pop(); if (!snap) { toast('没有可撤销的'); return; } st.ctx.drawImage(snap, 0, 0); }
+function ieUndo(st) { const snap = st.undo.pop(); if (!snap) { toast('Nothing to undo'); return; } st.ctx.drawImage(snap, 0, 0); }
 function ieExport(st) {
   const fmt = $('#ie-format').value;
   const w = Math.max(16, parseInt($('#ie-width').value, 10) || st.canvas.width);
@@ -992,17 +986,17 @@ async function ieSave(st, asNew) {
   const sameType = st.origExt === ext || (['jpg', 'jpeg'].includes(st.origExt) && ext === 'jpg');
   let newName = null;
   if (asNew || !sameType) {
-    const suggest = st.e.name.replace(/\.[^.]+$/, '') + (asNew ? '-编辑' : '') + '.' + ext;
-    newName = await inputDialog(asNew ? '另存为' : '格式已变，另存为新文件', suggest, '文件名（含扩展名）');
+    const suggest = st.e.name.replace(/\.[^.]+$/, '') + (asNew ? '-edit' : '') + '.' + ext;
+    newName = await inputDialog(asNew ? 'Save As' : 'Format changed — save as new file', suggest, 'Filename (with extension)');
     if (!newName) return;
   } else {
     // 覆盖原图不可逆且为有损重编码——给一次确认（删除都走废纸篓，覆盖更该拦）
-    const ok = await confirmDialog('将覆盖原图、且重新编码（可能轻微降质），此操作不可恢复。确定覆盖？建议用「另存为」。');
+    const ok = await confirmDialog('This overwrites the original and re-encodes it (slight quality loss). It cannot be undone. Overwrite? "Save As" is recommended.');
     if (!ok) return;
   }
   const r = await apiPost('/api/image-save', { path: st.e.path, dataUrl, newName });
-  if (r.error) { toast('保存失败：' + r.error, true); return; }
-  toast(newName ? '已另存为 ' + baseOf(r.path) : '已保存（已覆盖原图）');
+  if (r.error) { toast('Save failed: ' + r.error, true); return; }
+  toast(newName ? 'Saved as ' + baseOf(r.path) : 'Saved (original overwritten)');
   imgEditState = null;
   await refresh();
   const saved = state.entries.find((x) => x.path === r.path) || st.e;
@@ -1018,17 +1012,17 @@ async function openWith(p, withApp) {
   const r = await apiPost('/api/open', { path: p, with: withApp });
   if (r.ok) {
     const used = r.with;
-    if (used === 'reveal') toast('已在文件管理器中显示');
-    else if (used === 'terminal') toast('已在终端打开此目录');
-    else if (used === 'editor') toast('已在编辑器打开');
-    else if (withApp === 'editor' && used === 'default') toast('未找到 code 命令，已用默认应用打开');
-    else toast('已打开');
+    if (used === 'reveal') toast('Revealed in Finder');
+    else if (used === 'terminal') toast('Opened this folder in terminal');
+    else if (used === 'editor') toast('Opened in editor');
+    else if (withApp === 'editor' && used === 'default') toast("'code' command not found — opened with default app");
+    else toast('Opened');
     loadFavorites();
-  } else toast('打开失败：' + (r.error || ''), true);
+  } else toast('Open failed: ' + (r.error || ''), true);
 }
 async function copyPath(p) {
-  try { await navigator.clipboard.writeText(p); toast('已复制路径'); }
-  catch { toast('复制失败（浏览器限制），路径：' + p, true); }
+  try { await navigator.clipboard.writeText(p); toast('Path copied'); }
+  catch { toast('Copy failed (browser limitation). Path: ' + p, true); }
 }
 // 记录最近打开：内部预览/编辑也算「打开过」，本地即时置顶 + 异步落库
 function recordRecent(p) {
@@ -1045,7 +1039,7 @@ async function toggleFav(e) {
   const on = isFav(e.path);
   const star = $('#file-area').querySelector(`[data-path="${CSS.escape(e.path)}"] .fav-btn`);
   if (star) { star.classList.toggle('on', on); star.innerHTML = svgWrap(SVG.star, 'currentColor', 15, on); }
-  toast(on ? '已收藏' : '已取消收藏');
+  toast(on ? 'Added to Favorites' : 'Removed from Favorites');
 }
 
 // ---------- 文件操作（编辑 / 重命名 / 废纸篓 / 新建）----------
@@ -1072,10 +1066,10 @@ async function enterEditMode(e) {
   renderPreviewActions(e);
   renderPreviewFoot(e);
   const body = $('#preview-body');
-  body.innerHTML = '<div class="cmdk-loading">加载中…</div>';
+  body.innerHTML = '<div class="cmdk-loading">Loading…</div>';
   const data = await api('/api/read?path=' + encodeURIComponent(e.path));
   if (data.tooLarge) {
-    toast('文件太大，暂不支持原地编辑', true);
+    toast('File too large for in-place editing', true);
     if (isMdName(e.name)) { renderTextPreview(data); return; } // md 预览即编辑，回 openPreview 会循环
     openPreview(e); return;
   }
@@ -1085,7 +1079,7 @@ async function enterEditMode(e) {
   let getValue, baseline = ''; // baseline：编辑器内的「已保存基准」，用于未保存守卫
   const leave = async () => {
     if (getValue && getValue() !== baseline) {
-      const ok = await confirmDialog('有未保存的改动，放弃并退出？（保存请点取消后按 ⌘S）');
+      const ok = await confirmDialog('Unsaved changes — discard and exit? (To save, hit Cancel then press ⌘S)');
       if (!ok) return;
     }
     dirtyCheck = null; // 已在此确认过，避免 openPreview 的守卫再问一次
@@ -1095,13 +1089,13 @@ async function enterEditMode(e) {
     const content = getValue();
     const r = await apiPost('/api/write', { path: e.path, content, expectedMtime: force ? 0 : baseMtime });
     if (r.conflict) {
-      const ok = await confirmDialog('文件已被外部修改（可能是 agent 改的）。覆盖会丢掉外部改动，确定覆盖？');
+      const ok = await confirmDialog('File was modified externally (possibly by an agent). Overwriting discards those changes — overwrite?');
       if (ok) return save(true);
       return;
     }
-    if (r.ok === false || r.error) { toast('保存失败：' + (r.error || ''), true); return; }
+    if (r.ok === false || r.error) { toast('Save failed: ' + (r.error || ''), true); return; }
     baseMtime = r.mtime; baseline = content; // 更新已保存基准
-    toast('已保存');
+    toast('Saved');
     refresh(); // 后台刷新文件区，不打断编辑（⌘S 留在编辑器里）
   };
   // 挂上未保存守卫：离开编辑器（切文件/跳目录/关预览）前比对当前值与已保存基准
@@ -1110,7 +1104,7 @@ async function enterEditMode(e) {
   if (await mona.load()) {
     const monaco = window.monaco;
     body.innerHTML =
-      `<div class="editor-bar"><button id="ed-save" class="primary">保存</button><button id="ed-cancel" class="ghost-btn">完成</button><span class="editor-hint">⌘S 保存 · ⌘F 查找 · Esc 完成</span></div>` +
+      `<div class="editor-bar"><button id="ed-save" class="primary">Save</button><button id="ed-cancel" class="ghost-btn">Done</button><span class="editor-hint">⌘S save · ⌘F find · Esc done</span></div>` +
       `<div id="ed-host" class="mona-host"></div>`;
     const ed = monaco.editor.create($('#ed-host'), {
       value: data.content || '', language: mona.lang(ex), theme: mona.themeName(),
@@ -1127,7 +1121,7 @@ async function enterEditMode(e) {
     setTimeout(() => ed.focus(), 0);
   } else {
     body.innerHTML =
-      `<div class="editor-bar"><button id="ed-save" class="primary">保存</button><button id="ed-cancel" class="ghost-btn">完成</button><span class="editor-hint">⌘S 保存 · Esc 完成</span></div>` +
+      `<div class="editor-bar"><button id="ed-save" class="primary">Save</button><button id="ed-cancel" class="ghost-btn">Done</button><span class="editor-hint">⌘S save · Esc done</span></div>` +
       `<textarea id="ed-host" class="editor-area" spellcheck="false"></textarea>`;
     const ta = $('#ed-host');
     ta.value = data.content || '';
@@ -1157,19 +1151,19 @@ async function mdEditor(e, data, mode = 'rich') {
     if (!getValue || paused) return;
     const content = getValue();
     if (content === baseline) return;
-    setStatus('保存中…');
+    setStatus('Saving…');
     const r = await apiPost('/api/write', { path: e.path, content, expectedMtime: force ? 0 : baseMtime });
     if (r.conflict) {
       paused = true;
-      const ok = await confirmDialog('文件已被外部修改（可能是 agent 改的）。覆盖会丢掉外部改动，确定覆盖？');
+      const ok = await confirmDialog('File was modified externally (possibly by an agent). Overwriting discards those changes — overwrite?');
       paused = false;
       if (ok) return doSave(true);
-      setStatus('未保存：文件被外部修改');
+      setStatus('Not saved: file changed externally');
       return;
     }
-    if (r.ok === false || r.error) { setStatus('保存失败'); toast('保存失败：' + (r.error || ''), true); return; }
+    if (r.ok === false || r.error) { setStatus('Save failed'); toast('Save failed: ' + (r.error || ''), true); return; }
     baseMtime = r.mtime; baseline = content;
-    setStatus('已保存');
+    setStatus('Saved');
   };
   const queue = () => { clearTimeout(timer); timer = setTimeout(() => { chain = chain.then(() => doSave()); }, 800); };
   const flush = () => { clearTimeout(timer); chain = chain.then(() => doSave()); return chain; };
@@ -1179,7 +1173,7 @@ async function mdEditor(e, data, mode = 'rich') {
     mode = m;
     mona.disposeIfAny(); crepe.disposeIfAny();
     body.innerHTML =
-      `<div class="editor-bar"><button id="md-mode" class="ghost-btn">${m === 'rich' ? '源码' : '富文本'}</button><span id="md-status" class="editor-hint">自动保存 · ⌘S 立即保存</span></div>` +
+      `<div class="editor-bar"><button id="md-mode" class="ghost-btn">${m === 'rich' ? 'Source' : 'Rich text'}</button><span id="md-status" class="editor-hint">Autosave · ⌘S to save now</span></div>` +
       `<div id="ed-host" class="${m === 'rich' ? 'crepe-host' : 'mona-host'}"></div>`;
     $('#md-mode').onclick = async () => {
       await flush();
@@ -1233,32 +1227,32 @@ async function mdEditor(e, data, mode = 'rich') {
   await render(mode);
 }
 async function doRename(e) {
-  const name = await inputDialog('重命名', e.name, '输入新名称');
+  const name = await inputDialog('Rename', e.name, 'New name');
   if (!name || name === e.name) return;
   const r = await apiPost('/api/rename', { path: e.path, newName: name });
-  if (r.error) { toast('重命名失败：' + r.error, true); return; }
-  toast('已重命名');
+  if (r.error) { toast('Rename failed: ' + r.error, true); return; }
+  toast('Renamed');
   if (state.selected === e.path) state.selected = r.path;
   await refresh();
 }
 async function doTrash(e) {
   // 文件秒删（花叔的选择），但删整个文件夹给一次轻确认——误删项目目录代价高
   if (e.isDir) {
-    const ok = await confirmDialog(`把文件夹「${e.name}」移到废纸篓？可从废纸篓恢复。`);
+    const ok = await confirmDialog(`Move folder "${e.name}" to Trash? You can restore it from Trash.`);
     if (!ok) return;
   }
   const r = await apiPost('/api/trash', { path: e.path });
-  if (r.error) { toast('删除失败：' + r.error + '（首次需在弹窗里允许控制 Finder）', true); return; }
-  toast('已移到废纸篓，可从废纸篓恢复');
+  if (r.error) { toast('Delete failed: ' + r.error + ' (first run: allow controlling Finder in the system prompt)', true); return; }
+  toast('Moved to Trash — restorable from Trash');
   if (state.selected === e.path) closePreview();
   await refresh();
 }
 async function doCreate(type) {
-  const name = await inputDialog(type === 'dir' ? '新建文件夹' : '新建文件', '', type === 'dir' ? '文件夹名称' : '文件名（带扩展名，如 note.md）');
+  const name = await inputDialog(type === 'dir' ? 'New folder' : 'New file', '', type === 'dir' ? 'Folder name' : 'Filename (with extension, e.g. note.md)');
   if (!name) return;
   const r = await apiPost('/api/create', { path: state.cwd, name, type });
-  if (r.error) { toast('新建失败：' + r.error, true); return; }
-  toast(type === 'dir' ? '已新建文件夹' : '已新建文件');
+  if (r.error) { toast('Create failed: ' + r.error, true); return; }
+  toast(type === 'dir' ? 'Folder created' : 'File created');
   await refresh();
   // 新建文件顺手打开编辑
   if (type === 'file') { const ne = state.entries.find((x) => x.path === r.path); if (ne && ne.kind === 'text') enterEditMode(ne); }
@@ -1270,7 +1264,7 @@ function inputDialog(title, value = '', placeholder = '') {
     ov.className = 'input-overlay';
     ov.innerHTML = `<div class="input-dialog"><div class="input-title">${escapeHtml(title)}</div>
       <input class="input-field" value="${escapeHtml(value)}" placeholder="${escapeHtml(placeholder)}" spellcheck="false">
-      <div class="input-actions"><button class="ghost-btn" data-act="cancel">取消</button><button class="primary" data-act="ok">确定</button></div></div>`;
+      <div class="input-actions"><button class="ghost-btn" data-act="cancel">Cancel</button><button class="primary" data-act="ok">OK</button></div></div>`;
     document.body.appendChild(ov);
     const inp = ov.querySelector('.input-field');
     inp.focus();
@@ -1291,7 +1285,7 @@ function confirmDialog(msg) {
   return new Promise((resolve) => {
     const ov = document.createElement('div');
     ov.className = 'input-overlay';
-    ov.innerHTML = `<div class="input-dialog"><div class="input-title">${escapeHtml(msg)}</div><div class="input-actions"><button class="ghost-btn" data-act="no">取消</button><button class="primary" data-act="yes">确定</button></div></div>`;
+    ov.innerHTML = `<div class="input-dialog"><div class="input-title">${escapeHtml(msg)}</div><div class="input-actions"><button class="ghost-btn" data-act="no">Cancel</button><button class="primary" data-act="yes">OK</button></div></div>`;
     document.body.appendChild(ov);
     const done = (v) => { ov.remove(); document.removeEventListener('keydown', onKey, true); resolve(v); };
     function onKey(ev) { if (ev.key === 'Escape') { ev.preventDefault(); done(false); } else if (ev.key === 'Enter') { ev.preventDefault(); done(true); } }
@@ -1314,13 +1308,13 @@ const shotTray = {
     const el = document.createElement('div');
     el.className = 'shot-card';
     el.innerHTML = `
-      <img class="shot-thumb" draggable="true" src="/api/thumb?path=${encodeURIComponent(m.path)}&w=480&v=${m.size}" title="新截图 · 可拖进终端">
+      <img class="shot-thumb" draggable="true" src="/api/thumb?path=${encodeURIComponent(m.path)}&w=480&v=${m.size}" title="New screenshot · drag into terminal">
       <div class="shot-info"><div class="shot-name">${escapeHtml(m.name)}</div>
       <div class="shot-acts">
-        <button data-act="term" title="把路径喂给终端里的 agent">→ 终端</button>
-        <button data-act="save" title="移动到当前文件夹的 素材/ 子目录">收进素材</button>
-        <button data-act="edit" title="圈重点再发">标注</button>
-        <button data-act="close" title="不理它也会自己走">✕</button>
+        <button data-act="term" title="Feed the path to the agent in the terminal">→ Terminal</button>
+        <button data-act="save" title="Move into this folder's 素材/ (assets) subfolder">File into assets</button>
+        <button data-act="edit" title="Mark it up before sending">Annotate</button>
+        <button data-act="close" title="Goes away on its own">✕</button>
       </div></div>`;
     document.body.appendChild(el);
     this.el = el;
@@ -1330,7 +1324,7 @@ const shotTray = {
     el.querySelector('[data-act=term]').onclick = () => { term.insertPath(m.path); this.dismiss(); };
     el.querySelector('[data-act=save]').onclick = async () => {
       const r = await apiPost('/api/move', { src: m.path, dstDir: state.cwd + '/素材' });
-      if (r.ok) toast('已收进 素材/'); else toast(r.error || '移动失败', true);
+      if (r.ok) toast('Filed into 素材/'); else toast(r.error || 'Move failed', true);
       this.dismiss();
     };
     el.querySelector('[data-act=edit]').onclick = () => {
@@ -1349,8 +1343,8 @@ async function memoryPanel(dirPath) {
   const ov = document.createElement('div');
   ov.className = 'input-overlay mem-overlay';
   ov.innerHTML = `<div class="input-dialog mem-dialog">
-    <div class="input-title">项目记忆 · ${escapeHtml(dirPath.replace(state.home, '~'))}</div>
-    <div class="mem-body"><div class="cmdk-loading">翻会话日志中…</div></div></div>`;
+    <div class="input-title">Project memory · ${escapeHtml(dirPath.replace(state.home, '~'))}</div>
+    <div class="mem-body"><div class="cmdk-loading">Digging through session logs…</div></div></div>`;
   document.body.appendChild(ov);
   const onKey = (ev) => { if (ev.key === 'Escape') { ev.preventDefault(); close(); } };
   const close = () => { ov.remove(); document.removeEventListener('keydown', onKey, true); };
@@ -1359,17 +1353,17 @@ async function memoryPanel(dirPath) {
   const d = await api('/api/project-memory?path=' + encodeURIComponent(dirPath));
   const body = ov.querySelector('.mem-body');
   if (!d.ok || !d.sessions.length) {
-    body.innerHTML = '<div class="empty-state">这个文件夹还没有 agent 会话记录<br><br><span class="usage-sub">在这里跑过 Claude Code / Codex 之后，历史会话会出现在这里</span></div>';
+    body.innerHTML = '<div class="empty-state">No agent sessions in this folder yet<br><br><span class="usage-sub">Run Claude Code / Codex here and past sessions will appear</span></div>';
     return;
   }
   body.innerHTML = d.sessions.map((s, i) => `
     <div class="mem-sess">
       <div class="mem-head" data-i="${i}">
         <span class="mem-agent${s.agent === 'codex' ? ' codex' : ''}">${s.agent === 'codex' ? '>_' : 'C'}</span>
-        <span class="mem-title">${escapeHtml(s.title || '（无标题会话）')}</span>
-        <button class="ghost-btn mem-resume" data-i="${i}" title="在内嵌终端里接上这段会话的上下文继续">▶ 续上</button>
+        <span class="mem-title">${escapeHtml(s.title || '(untitled session)')}</span>
+        <button class="ghost-btn mem-resume" data-i="${i}" title="Resume this session's context in the embedded terminal">▶ Resume</button>
       </div>
-      <div class="mem-meta">${fmtTime(s.lastT)} · ${s.userMsgs} 条消息${s.files.length ? ` · 改了 ${s.files.length} 个文件` : ''}${s.skills.length ? ' · ' + s.skills.map((k) => `<i class="mem-skill">${escapeHtml(k)}</i>`).join(' ') : ''}</div>
+      <div class="mem-meta">${fmtTime(s.lastT)} · ${s.userMsgs} message${s.userMsgs === 1 ? '' : 's'}${s.files.length ? ` · changed ${s.files.length} file${s.files.length === 1 ? '' : 's'}` : ''}${s.skills.length ? ' · ' + s.skills.map((k) => `<i class="mem-skill">${escapeHtml(k)}</i>`).join(' ') : ''}</div>
       ${s.files.length ? `<div class="mem-files hidden">${s.files.map((f) => `<div class="mem-file" data-p="${escapeHtml(f)}" title="${escapeHtml(f)}">${escapeHtml(f.startsWith(dirPath + '/') ? f.slice(dirPath.length + 1) : f.replace(state.home, '~'))}</div>`).join('')}</div>` : ''}
     </div>`).join('');
   body.querySelectorAll('.mem-head').forEach((h) => {
@@ -1384,7 +1378,7 @@ async function memoryPanel(dirPath) {
       const s = d.sessions[Number(b.dataset.i)];
       const cmd = s.agent === 'codex' ? `codex resume ${s.id}` : `claude --dangerously-skip-permissions --resume ${s.id}`;
       close();
-      term.runInDir(dirPath, cmd, '已在终端续上会话');
+      term.runInDir(dirPath, cmd, 'Session resumed in terminal');
     };
   });
   body.querySelectorAll('.mem-file').forEach((f) => {
@@ -1403,8 +1397,8 @@ async function memoryPanel(dirPath) {
 // 你在终端里对话确认/调整后它才动手；每批移动写回滚日志，想撤销在对话里说一声就行
 async function organizeLaunch(dirPath) {
   const r = await apiPost('/api/organize/launch', { path: dirPath });
-  if (!r.ok) { toast(r.error || 'AI 整理启动失败', true); return; }
-  term.runInDir(dirPath, r.cmd, `${r.engine === 'codex' ? 'Codex' : 'Claude'} 已开聊——先摊方案，你点头它才动手`);
+  if (!r.ok) { toast(r.error || 'Failed to launch AI organize', true); return; }
+  term.runInDir(dirPath, r.cmd, `${r.engine === 'codex' ? 'Codex' : 'Claude'} is ready — it lays out a plan first and only moves files after you approve`);
 }
 
 // 发版向导：版本号 + 发布说明（预填 CHANGELOG 的 Unreleased 段）→ 命令序列在内嵌终端跑，每步可见可拦
@@ -1413,7 +1407,7 @@ async function releasePanel() {
   const old = $('.rel-overlay'); if (old) old.remove();
   const ov = document.createElement('div');
   ov.className = 'input-overlay rel-overlay';
-  ov.innerHTML = `<div class="input-dialog rel-dialog"><div class="input-title">发版</div><div class="rel-body"><div class="cmdk-loading">检查项目状态…</div></div></div>`;
+  ov.innerHTML = `<div class="input-dialog rel-dialog"><div class="input-title">Release</div><div class="rel-body"><div class="cmdk-loading">Checking project status…</div></div></div>`;
   document.body.appendChild(ov);
   const onKey = (ev) => { if (ev.key === 'Escape') { ev.preventDefault(); close(); } };
   const close = () => { ov.remove(); document.removeEventListener('keydown', onKey, true); };
@@ -1424,20 +1418,20 @@ async function releasePanel() {
   if (!d.ok) { body.innerHTML = `<div class="empty-state">${escapeHtml(d.error)}</div>`; return; }
   const bump = d.version.replace(/(\d+)(\D*)$/, (m, n, t) => (Number(n) + 1) + t);
   body.innerHTML = `
-    <div class="rel-row"><label>版本号</label><span class="rel-cur">当前 v${escapeHtml(d.version)} →</span><input id="rel-ver" value="${escapeHtml(bump)}" spellcheck="false"></div>
-    <div class="rel-row rel-col"><label>发布说明${d.unreleased ? '（预填自 CHANGELOG 的 Unreleased 段）' : ''}</label><textarea id="rel-notes" rows="8" spellcheck="false">${escapeHtml(d.unreleased)}</textarea></div>
+    <div class="rel-row"><label>Version</label><span class="rel-cur">now v${escapeHtml(d.version)} →</span><input id="rel-ver" value="${escapeHtml(bump)}" spellcheck="false"></div>
+    <div class="rel-row rel-col"><label>Release notes${d.unreleased ? " (prefilled from CHANGELOG's Unreleased section)" : ''}</label><textarea id="rel-notes" rows="8" spellcheck="false">${escapeHtml(d.unreleased)}</textarea></div>
     <div class="rel-opts">
-      ${d.hasDist ? '<label><input type="checkbox" id="rel-dist" checked> 打包（npm run dist）</label>' : ''}
-      ${d.remote ? '<label><input type="checkbox" id="rel-push" checked> 推送（git push）</label>' : ''}
-      ${d.gh && d.remote ? '<label><input type="checkbox" id="rel-gh" checked> GitHub Release' + (d.hasDist ? '（附 dmg）' : '') + '</label>' : ''}
+      ${d.hasDist ? '<label><input type="checkbox" id="rel-dist" checked> Build (npm run dist)</label>' : ''}
+      ${d.remote ? '<label><input type="checkbox" id="rel-push" checked> Push (git push)</label>' : ''}
+      ${d.gh && d.remote ? '<label><input type="checkbox" id="rel-gh" checked> GitHub Release' + (d.hasDist ? ' (with dmg)' : '') + '</label>' : ''}
     </div>
-    ${d.dirty ? '<div class="rel-hint">工作区有未提交改动，会一并进这次发版 commit</div>' : ''}
-    ${!d.isRepo ? '<div class="rel-hint">这里不是 git 仓库，只能改版本号</div>' : ''}
-    <div class="input-actions"><button class="ghost-btn" id="rel-cancel">取消</button><button class="primary" id="rel-go">在终端开跑</button></div>`;
+    ${d.dirty ? '<div class="rel-hint">Working tree has uncommitted changes — they will be included in the release commit</div>' : ''}
+    ${!d.isRepo ? '<div class="rel-hint">Not a git repo — only the version number can be bumped</div>' : ''}
+    <div class="input-actions"><button class="ghost-btn" id="rel-cancel">Cancel</button><button class="primary" id="rel-go">Run in terminal</button></div>`;
   $('#rel-cancel').onclick = close;
   $('#rel-go').onclick = async () => {
     const version = $('#rel-ver').value.trim();
-    if (!/^\d+\.\d+\.\d+/.test(version)) { toast('版本号要 x.y.z 格式', true); return; }
+    if (!/^\d+\.\d+\.\d+/.test(version)) { toast('Version must be x.y.z', true); return; }
     $('#rel-go').disabled = true;
     const r = await apiPost('/api/release/prepare', {
       path: dirPath, version,
@@ -1446,9 +1440,9 @@ async function releasePanel() {
       doPush: !!($('#rel-push') && $('#rel-push').checked),
       doRelease: !!($('#rel-gh') && $('#rel-gh').checked),
     });
-    if (!r.ok) { toast(r.error || '准备失败', true); $('#rel-go').disabled = false; return; }
+    if (!r.ok) { toast(r.error || 'Preparation failed', true); $('#rel-go').disabled = false; return; }
     close();
-    term.runInDir(dirPath, r.cmd, `v${version} 发版序列已在终端开跑`);
+    term.runInDir(dirPath, r.cmd, `v${version} release pipeline running in terminal`);
   };
 }
 
@@ -1459,21 +1453,21 @@ async function diskPanel(dirPath) {
   ov.className = 'input-overlay disk-overlay';
   ov.innerHTML = `<div class="input-dialog disk-dialog">
     <div class="input-title disk-title"></div>
-    <div class="disk-body"><div class="cmdk-loading">计算中…（大目录会慢几秒）</div></div></div>`;
+    <div class="disk-body"><div class="cmdk-loading">Calculating… (big folders take a few seconds)</div></div></div>`;
   document.body.appendChild(ov);
   const onKey = (ev) => { if (ev.key === 'Escape') { ev.preventDefault(); close(); } };
   const close = () => { ov.remove(); document.removeEventListener('keydown', onKey, true); };
   ov.onclick = (ev) => { if (ev.target === ov) close(); };
   document.addEventListener('keydown', onKey, true);
   const load = async (p) => {
-    ov.querySelector('.disk-title').textContent = '磁盘占用 · ' + p.replace(state.home, '~');
+    ov.querySelector('.disk-title').textContent = 'Disk usage · ' + p.replace(state.home, '~');
     const body = ov.querySelector('.disk-body');
-    body.innerHTML = '<div class="cmdk-loading">计算中…（大目录会慢几秒）</div>';
+    body.innerHTML = '<div class="cmdk-loading">Calculating… (big folders take a few seconds)</div>';
     const d = await api('/api/du?path=' + encodeURIComponent(p));
-    if (!d.ok) { body.innerHTML = `<div class="empty-state">${escapeHtml(d.error || '读取失败')}</div>`; return; }
+    if (!d.ok) { body.innerHTML = `<div class="empty-state">${escapeHtml(d.error || 'Read failed')}</div>`; return; }
     const max = d.items.length ? d.items[0].size : 1;
-    const up = p !== '/' ? `<div class="disk-row disk-up" data-dir="${escapeHtml(dirOf(p))}"><span class="disk-name">↑ 上一级</span></div>` : '';
-    body.innerHTML = `<div class="disk-total">共 ${fmtSize(d.total)}${d.more ? ` · 只显示前 ${d.items.length} 项` : ''}</div>` + up +
+    const up = p !== '/' ? `<div class="disk-row disk-up" data-dir="${escapeHtml(dirOf(p))}"><span class="disk-name">↑ Up one level</span></div>` : '';
+    body.innerHTML = `<div class="disk-total">Total ${fmtSize(d.total)}${d.more ? ` · top ${d.items.length} shown` : ''}</div>` + up +
       d.items.map((it) => `<div class="disk-row${it.isDir ? ' is-dir' : ''}" data-dir="${it.isDir ? escapeHtml(p + '/' + it.name) : ''}">
         <i class="disk-bar" style="width:${Math.max(1, Math.round(it.size / max * 100))}%"></i>
         <span class="disk-name">${it.isDir ? '📁 ' : ''}${escapeHtml(it.name)}</span><span class="disk-size">${fmtSize(it.size)}</span></div>`).join('');
@@ -1490,21 +1484,21 @@ function showContextMenu(ev, e) {
   ev.preventDefault();
   closeContextMenu();
   const items = [];
-  if (e.isDir) items.push({ label: '打开', fn: () => navigate(e.path) });
-  else items.push({ label: '预览', fn: () => { state.selected = e.path; openPreview(e); renderFiles(); } });
-  if (e.isDir) items.push({ label: 'AI 整理…', fn: () => organizeLaunch(e.path) });
-  if (e.isDir) items.push({ label: '磁盘占用透视', fn: () => diskPanel(e.path) });
-  if (e.isDir) items.push({ label: '在终端打开', fn: () => term.openInDir(e.path) });
-  else items.push({ label: '在所在目录开终端', fn: () => term.openInDir(dirOf(e.path)) });
-  if (e.kind === 'text') items.push({ label: '编辑文本', fn: () => enterEditMode(e) });
-  if (e.kind === 'image') items.push({ label: '编辑图片', fn: () => enterImageEdit(e) });
-  items.push({ label: '在编辑器打开', fn: () => openWith(e.path, 'editor') });
-  items.push({ label: '在 Finder 显示', fn: () => openWith(e.path, 'reveal') });
-  items.push({ label: '复制路径', fn: () => copyPath(e.path) });
+  if (e.isDir) items.push({ label: 'Open', fn: () => navigate(e.path) });
+  else items.push({ label: 'Preview', fn: () => { state.selected = e.path; openPreview(e); renderFiles(); } });
+  if (e.isDir) items.push({ label: 'Organize with AI…', fn: () => organizeLaunch(e.path) });
+  if (e.isDir) items.push({ label: 'Analyze disk usage', fn: () => diskPanel(e.path) });
+  if (e.isDir) items.push({ label: 'Open in Terminal', fn: () => term.openInDir(e.path) });
+  else items.push({ label: 'Open Terminal in enclosing folder', fn: () => term.openInDir(dirOf(e.path)) });
+  if (e.kind === 'text') items.push({ label: 'Edit text', fn: () => enterEditMode(e) });
+  if (e.kind === 'image') items.push({ label: 'Edit image', fn: () => enterImageEdit(e) });
+  items.push({ label: 'Open in editor', fn: () => openWith(e.path, 'editor') });
+  items.push({ label: 'Reveal in Finder', fn: () => openWith(e.path, 'reveal') });
+  items.push({ label: 'Copy path', fn: () => copyPath(e.path) });
   items.push({ sep: true });
-  items.push({ label: isFav(e.path) ? '取消收藏' : '收藏', fn: () => toggleFav(e) });
-  items.push({ label: '重命名…', fn: () => doRename(e) });
-  items.push({ label: '移到废纸篓', danger: true, fn: () => doTrash(e) });
+  items.push({ label: isFav(e.path) ? 'Unfavorite' : 'Favorites', fn: () => toggleFav(e) });
+  items.push({ label: 'Rename…', fn: () => doRename(e) });
+  items.push({ label: 'Move to Trash', danger: true, fn: () => doTrash(e) });
   popupMenu(ev, items);
 }
 // 在鼠标位置弹一个菜单（右键菜单与空白处双击菜单共用）
@@ -1535,7 +1529,7 @@ function navDirLi(name, p) {
   const twirl = document.createElement('span');
   twirl.className = 'twirl';
   twirl.textContent = '▸';
-  twirl.title = '展开子文件夹';
+  twirl.title = 'Expand subfolders';
   twirl.onclick = (ev) => { ev.stopPropagation(); toggleNavSub(li, p, twirl); };
   const ico = document.createElement('span');
   ico.className = 'ico';
@@ -1559,7 +1553,7 @@ async function toggleNavSub(li, dirPath, twirl) {
   try {
     const data = await api('/api/list?path=' + encodeURIComponent(dirPath));
     const dirs = (data.entries || []).filter((e) => e.isDir && !e.hidden);
-    if (!dirs.length) { ul.innerHTML = '<div class="nav-empty">没有子文件夹</div>'; return; }
+    if (!dirs.length) { ul.innerHTML = '<div class="nav-empty">No subfolders</div>'; return; }
     dirs.forEach((e) => ul.appendChild(navDirLi(e.name, e.path)));
   } catch { ul.remove(); twirl.textContent = '▸'; }
 }
@@ -1584,7 +1578,7 @@ async function loadFavorites() {
 function renderFavs() {
   const ul = $('#favs-list');
   ul.innerHTML = '';
-  if (!state.favorites.length) { ul.innerHTML = '<div class="nav-empty">悬停文件点 ☆ 即可收藏</div>'; return; }
+  if (!state.favorites.length) { ul.innerHTML = '<div class="nav-empty">Hover a file and click ☆ to favorite</div>'; return; }
   state.favorites.forEach((f) => {
     let li;
     if (f.isDir) {
@@ -1597,7 +1591,7 @@ function renderFavs() {
     }
     const un = document.createElement('span');
     un.className = 'unfav';
-    un.title = '移除';
+    un.title = 'Remove';
     un.textContent = '✕';
     un.onclick = (ev) => { ev.stopPropagation(); toggleFav(f); };
     li.appendChild(un);
@@ -1607,10 +1601,10 @@ function renderFavs() {
 // Agent 项目：最近被 Claude Code / Codex 处理过的项目文件夹，从两者的本机会话日志扫出来
 function agoShort(ms) {
   const m = Math.round((Date.now() - ms) / 60000);
-  if (m < 2) return '刚刚';
-  if (m < 60) return m + ' 分';
-  if (m < 1440) return Math.round(m / 60) + ' 时';
-  return Math.round(m / 1440) + ' 天';
+  if (m < 2) return 'just now';
+  if (m < 60) return m + 'm';
+  if (m < 1440) return Math.round(m / 60) + 'h';
+  return Math.round(m / 1440) + 'd';
 }
 async function loadAgentProjects() {
   let data;
@@ -1622,10 +1616,10 @@ async function loadAgentProjects() {
   loadAgentProjects._sig = sig;
   const ul = $('#agent-projects-list');
   ul.innerHTML = '';
-  if (!list.length) { ul.innerHTML = '<div class="nav-empty">用 Claude Code / Codex 跑过的项目会出现在这里</div>'; return; }
+  if (!list.length) { ul.innerHTML = '<div class="nav-empty">Projects run with Claude Code / Codex will show up here</div>'; return; }
   list.forEach((pj) => {
     const li = navDirLi(pj.name, pj.path);
-    li.querySelector('.label').title = `${pj.path}\n${pj.agents.join(' + ')} · ${agoShort(pj.lastActive)}前活跃`;
+    li.querySelector('.label').title = `${pj.path}\n${pj.agents.join(' + ')} · active ${agoShort(pj.lastActive)}`;
     const when = document.createElement('span');
     when.className = 'when';
     pj.agents.forEach((a) => {
@@ -1647,7 +1641,7 @@ async function showRecent() {
   if (follow.on) setFileFollow(false, '手动接管，文件跟随已停');
   state.recentMode = true;
   state.cursor = -1;
-  $('#file-area').innerHTML = '<div class="cmdk-loading">扫描最近修改的文件…</div>';
+  $('#file-area').innerHTML = '<div class="cmdk-loading">Scanning recently modified files…</div>';
   renderBreadcrumb();
   const data = await api('/api/recent?root=' + encodeURIComponent(state.cwd || state.home));
   state.entries = (data.results || []).map((e) => ({ ...e, hidden: false }));
@@ -1655,7 +1649,7 @@ async function showRecent() {
   renderFiles();
 }
 function truncNote() {
-  return `<div class="trunc-note">⚠ 文件太多，结果可能不完整。进入更具体的子目录可看到全部。</div>`;
+  return `<div class="trunc-note">⚠ Too many files — results may be incomplete. Open a more specific subfolder to see everything.</div>`;
 }
 
 // ---------- 命令面板 ----------
@@ -1667,7 +1661,7 @@ const cmdk = {
     const inp = $('#cmdk-input');
     inp.value = '';
     inp.focus();
-    $('#cmdk-results').innerHTML = '<div class="cmdk-loading">输入开始搜索 · 文件名模糊匹配，「内容:」搜全文（含 PDF、截图里的文字）</div>';
+    $('#cmdk-results').innerHTML = '<div class="cmdk-loading">Type to search · fuzzy filename match; “content:” searches full text (incl. PDFs and text in screenshots)</div>';
     this.results = [];
     this.active = 0;
   },
@@ -1675,15 +1669,15 @@ const cmdk = {
   toggleScope() { this.scopeAll = !this.scopeAll; this.updateScopeLabel(); this.search($('#cmdk-input').value); },
   root() { return this.scopeAll ? state.home : (state.cwd || state.home); },
   updateScopeLabel() {
-    $('#cmdk-scope').textContent = this.scopeAll ? '全机（主目录及以下）' : '当前目录 ' + tilde(state.cwd || state.home);
-    $('#scope-toggle').textContent = this.scopeAll ? '⤢ 全机' : '▢ 当前目录';
+    $('#cmdk-scope').textContent = this.scopeAll ? 'This Mac (home folder and below)' : 'This folder ' + tilde(state.cwd || state.home);
+    $('#scope-toggle').textContent = this.scopeAll ? '⤢ This Mac' : '▢ This folder';
     $('#scope-toggle').classList.toggle('on', this.scopeAll);
   },
   search(q) {
     clearTimeout(this.timer);
-    if (!q.trim()) { $('#cmdk-results').innerHTML = '<div class="cmdk-loading">输入开始搜索</div>'; return; }
+    if (!q.trim()) { $('#cmdk-results').innerHTML = '<div class="cmdk-loading">Type to search</div>'; return; }
     const isContent = /^(内容[:：]|content:)/i.test(q);
-    $('#cmdk-results').innerHTML = '<div class="cmdk-loading">搜索中…</div>';
+    $('#cmdk-results').innerHTML = '<div class="cmdk-loading">Searching…</div>';
     this.timer = setTimeout(async () => {
       const root = this.root();
       let data, term;
@@ -1705,7 +1699,7 @@ const cmdk = {
   },
   renderResults() {
     const ul = $('#cmdk-results');
-    if (!this.results.length) { ul.innerHTML = '<div class="cmdk-loading">没有结果</div>'; return; }
+    if (!this.results.length) { ul.innerHTML = '<div class="cmdk-loading">No results</div>'; return; }
     ul.innerHTML = '';
     this.results.forEach((r, i) => {
       const li = document.createElement('li');
@@ -1720,7 +1714,7 @@ const cmdk = {
       li.onclick = () => this.choose(i, false);
       ul.appendChild(li);
     });
-    if (this.truncated) ul.insertAdjacentHTML('beforeend', `<div class="cmdk-loading">⚠ 结果可能不完整，换更具体的关键词或缩小到当前目录</div>`);
+    if (this.truncated) ul.insertAdjacentHTML('beforeend', `<div class="cmdk-loading">⚠ Results may be incomplete — try a more specific term or narrow to this folder</div>`);
     this.scrollActive();
   },
   move(d) { if (!this.results.length) return; this.active = (this.active + d + this.results.length) % this.results.length; this.renderResults(); },
@@ -1765,15 +1759,15 @@ function maybeShowGuide() {
   ov.className = 'guide-overlay';
   ov.innerHTML = `<div class="guide-card">
     <div class="guide-logo">${svgWrap(SVG.box, 'currentColor', 46, true)}</div>
-    <h2>欢迎用 FanBox</h2>
-    <p>vibe coding 的驾驶舱——找文件、跑 agent、看它改、随手改，都在一个窗口：</p>
+    <h2>Welcome to FanBox</h2>
+    <p>The vibe-coding cockpit — find files, run agents, watch them edit, edit on the fly, all in one window:</p>
     <ul>
-      <li><b>⌘K</b> 全局搜文件和文件夹；<b>⌘↵</b> 把项目直接在编辑器整包打开；<code>内容:关键词</code> 搜文件里的字</li>
-      <li>顶部 <b>终端</b> 按钮开内嵌终端跑 Claude Code 等 agent；<b>把文件/文件夹拖进终端</b> 即插入路径喂给它当上下文</li>
-      <li><b>单击</b> 预览，<b>双击</b> 系统打开；预览里 <b>编辑</b> md 走所见即所得、<b>编辑图片</b> 可标注/打码/转格式</li>
-      <li>agent 改了哪些文件，列表实时高亮「改·N」，不用切窗口盯着看</li>
+      <li><b>⌘K</b> searches all files and folders; <b>⌘↵</b> opens the whole project in your editor; <code>content:keyword</code> searches inside files</li>
+      <li>The top <b>Terminal</b> button opens an embedded terminal for agents like Claude Code; <b>drag files/folders into the terminal</b> to insert paths as context</li>
+      <li><b>Single-click</b> to preview, <b>double-click</b> to open with the system; in preview, <b>Edit</b> gives WYSIWYG markdown, <b>Edit image</b> lets you annotate / pixelate / convert</li>
+      <li>Files agents touch light up live as "edited ×N" — no window-switching to keep watch</li>
     </ul>
-    <button id="guide-ok">开始使用</button>
+    <button id="guide-ok">Get started</button>
   </div>`;
   document.body.appendChild(ov);
   $('#guide-ok').onclick = () => { localStorage.setItem('fb_guided', '1'); ov.remove(); };
@@ -1825,7 +1819,7 @@ function bindTerminalResizer() {
     if (term.maximized) {
       term.maximized = false;
       $('#main-body').classList.remove('term-max');
-      const b = $('#term-max'); if (b) { b.classList.remove('on'); b.title = '终端铺满'; }
+      const b = $('#term-max'); if (b) { b.classList.remove('on'); b.title = 'Maximize terminal'; }
     }
     squeeze = $('#main-body').classList.contains('fm-squeezed');
     handle.classList.add('dragging');
@@ -1886,7 +1880,7 @@ function bindEvents() {
   $('#term-max').onclick = () => term.toggleMax();
   $('#term-dock').onclick = () => term.setDock(term.dock === 'bottom' ? 'right' : 'bottom');
   const muteBtn = $('#term-mute');
-  const syncMute = () => { muteBtn.textContent = state.muted ? '🔕' : '🔔'; muteBtn.title = state.muted ? '提示音已关（点击开启）' : '提示音已开（点击静音）'; };
+  const syncMute = () => { muteBtn.textContent = state.muted ? '🔕' : '🔔'; muteBtn.title = state.muted ? 'Chime off (click to enable)' : 'Chime on (click to mute)'; };
   syncMute();
   muteBtn.onclick = () => { state.muted = !state.muted; localStorage.setItem('fb_muted', state.muted ? '1' : '0'); syncMute(); if (!state.muted) playChime('tick'); };
   $('#term-close').onclick = () => term.close();
@@ -1934,11 +1928,11 @@ function bindEvents() {
     if (e.target.closest('.item') || e.target.closest('.row')) return; // 条目自身的菜单不抢
     e.preventDefault();
     popupMenu(e, [
-      { label: '新建文件夹…', fn: () => doCreate('dir') },
-      { label: '新建文件…', fn: () => doCreate('file') },
+      { label: 'New folder…', fn: () => doCreate('dir') },
+      { label: 'New file…', fn: () => doCreate('file') },
       { sep: true },
-      { label: 'AI 整理…', fn: () => organizeLaunch(state.cwd) },
-      { label: '磁盘占用透视', fn: () => diskPanel(state.cwd) },
+      { label: 'Organize with AI…', fn: () => organizeLaunch(state.cwd) },
+      { label: 'Analyze disk usage', fn: () => diskPanel(state.cwd) },
     ]);
   };
   $('#file-area').addEventListener('dblclick', blankMenu);
@@ -2008,7 +2002,7 @@ function updateGridSizeVisibility() {
 
 // ---------- 主题 / 皮肤 ----------
 function applyTheme(skin, rerender = true) {
-  if (!['terminal', 'warm', 'editorial'].includes(skin)) skin = 'terminal';
+  if (!['terminal', 'warm'].includes(skin)) skin = 'terminal';
   state.theme = skin;
   document.documentElement.dataset.theme = skin;
   localStorage.setItem('fb_theme', skin);
@@ -2047,11 +2041,6 @@ const term = {
       black: '#3a3025', red: '#b5502f', green: '#5f7a36', yellow: '#9a7b2e', blue: '#3a6a8a', magenta: '#9a5a7a', cyan: '#3a7a70', white: '#6b6355',
       brightBlack: '#8a7d68', brightRed: '#c75f38', brightGreen: '#6f8a40', brightYellow: '#b08a30', brightBlue: '#4a7a9a', brightMagenta: '#aa6a8a', brightCyan: '#4a8a82', brightWhite: '#3a3025',
     },
-    editorial: {
-      background: '#eae5d8', foreground: '#1a1a1a', cursor: '#ff433d', cursorAccent: '#eae5d8', selectionBackground: '#ff433d22',
-      black: '#0a0a0a', red: '#cc1f1a', green: '#00803a', yellow: '#8a6d00', blue: '#0000cc', magenta: '#9a2a8a', cyan: '#007a8a', white: '#57534a',
-      brightBlack: '#57534a', brightRed: '#e8302a', brightGreen: '#00a33e', brightYellow: '#a67c00', brightBlue: '#2222dd', brightMagenta: '#b03aa0', brightCyan: '#008a9a', brightWhite: '#0a0a0a',
-    },
   },
   theme() { return this.themes[state.theme] || this.themes.terminal; },
   toggle() {
@@ -2067,7 +2056,7 @@ const term = {
     else this.fitActive();
     $('#btn-terminal').classList.add('active');
     localStorage.setItem('fb_term_open', '1');
-    if (!localStorage.getItem('fb_term_draghint')) { localStorage.setItem('fb_term_draghint', '1'); setTimeout(() => toast('提示：把左侧文件 / 文件夹拖进终端，即插入路径喂给 agent'), 700); }
+    if (!localStorage.getItem('fb_term_draghint')) { localStorage.setItem('fb_term_draghint', '1'); setTimeout(() => toast('Tip: drag files / folders into the terminal to insert their paths as agent context'), 700); }
   },
   close() {
     if (this.maximized) this.toggleMax(false); // 铺满状态下收起终端，term-max 不清会把文件区一起藏没
@@ -2100,7 +2089,7 @@ const term = {
     this.maximized = force === undefined ? !this.maximized : force;
     $('#main-body').classList.toggle('term-max', this.maximized);
     const b = $('#term-max');
-    if (b) { b.classList.toggle('on', this.maximized); b.title = this.maximized ? '还原终端' : '终端铺满'; }
+    if (b) { b.classList.toggle('on', this.maximized); b.title = this.maximized ? 'Restore terminal' : 'Maximize terminal'; }
     this.fitActive();
   },
   // 在指定目录开终端（新标签）；浏览器版降级到系统终端。返回新 session（spawn 完成后）
@@ -2132,15 +2121,15 @@ const term = {
       if (cur && !cur.dead && await this.isPlainShell(cur)) sess = cur;
     }
     if (!sess) sess = await this.openInDir(state.cwd); // 等 spawn 完，拿确切 session 写入
-    if (sess && !sess.dead) { this.input(sess.id, cmd + '\r'); sess.xterm.focus(); toast('已在终端启动 ' + cmd); }
-    else toast('终端启动失败', true);
+    if (sess && !sess.dead) { this.input(sess.id, cmd + '\r'); sess.xterm.focus(); toast('Started ' + cmd + ' in terminal'); }
+    else toast('Terminal failed to start', true);
   },
   // 在指定目录新开标签跑命令（续会话/发版等）：不复用别处的空闲 shell，目录必须对
   async runInDir(dir, cmd, msg) {
     if (!this.available()) { openWith(dir, 'terminal'); return; }
     const sess = await this.openInDir(dir);
-    if (sess && !sess.dead) { this.input(sess.id, cmd + '\r'); sess.xterm.focus(); toast(msg || '已在终端启动'); }
-    else toast('终端启动失败', true);
+    if (sess && !sess.dead) { this.input(sess.id, cmd + '\r'); sess.xterm.focus(); toast(msg || 'Started in terminal'); }
+    else toast('Terminal failed to start', true);
   },
   // 该会话前台是不是裸 shell？判断不了一律按「不是」处理——宁可新开标签，也不往运行中的程序里打字
   async isPlainShell(s) {
@@ -2153,11 +2142,11 @@ const term = {
   },
   // 把预览里选中的文字作为「上下文」喂给终端 agent：带文件出处 + 围栏，bracketed paste 防逐行误提交
   sendContext(text, srcPath) {
-    if (!this.available()) { toast('内嵌终端不可用（网页版没有终端）', true); return; }
+    if (!this.available()) { toast('Embedded terminal unavailable (no terminal in the web version)', true); return; }
     const wasHidden = $('#terminal-panel').classList.contains('hidden');
     if (wasHidden) this.open();
     const rel = srcPath ? srcPath.replace(state.home, '~') : '';
-    const head = rel ? `（来自 ${rel} 的片段）` : '（选中的片段）';
+    const head = rel ? `(snippet from ${rel})` : '(selected snippet)';
     const block = `${head}\n\`\`\`\n${text}\n\`\`\`\n`;
     const write = () => {
       if (!this.active) return;
@@ -2198,12 +2187,12 @@ const term = {
     this.sessions.forEach((x) => { const d = x.cwd || x.startDir; if (d && !roots.includes(d)) roots.push(d); });
     const q = encodeURIComponent;
     const r = await api(`/api/locate?path=${q(candidate)}&name=${q(name)}&root=${q(cwd || state.home)}&tail=${q(tail || '')}&alt=${q(alt)}&roots=${q(roots.join('\n'))}`);
-    if (!r.found) { toast('没找到「' + name + '」', true); return; }
-    if (r.isDir) { navigate(r.path); toast('已跳到该目录'); return; }
+    if (!r.found) { toast('Couldn\'t find "' + name + '"', true); return; }
+    if (r.isDir) { navigate(r.path); toast('Jumped to that folder'); return; }
     await navigate(dirOf(r.path));
     const e = state.entries.find((x) => x.path === r.path) || { path: r.path, name: baseOf(r.path), kind: 'text', isDir: false };
     applySelection(r.path); openPreview(e); recordRecent(r.path);
-    toast(r.viaSearch ? '未精确命中，已打开最接近的「' + baseOf(r.path) + '」' : (r.viaScrollback ? '已按会话里出现过的路径打开' : '已打开'));
+    toast(r.viaSearch ? 'No exact match — opened the closest "' + baseOf(r.path) + '"' : (r.viaScrollback ? 'Opened via a path seen in this session' : 'Opened'));
   },
   // 从 fromRow 往上回扫 scrollback（最多 2000 物理行），收集含该 basename 的绝对路径（/ 或 ~ 开头，
   // 最近出现在前，≤3 个），交给 /api/locate 逐个 stat 验证。折行沿 isWrapped 拼回逻辑行；
@@ -2243,7 +2232,7 @@ const term = {
     if (!this.active) return;
     const r = await window.fanboxPty.cwd(this.active);
     if (r && r.ok && r.cwd) navigate(r.cwd);
-    else toast('取终端目录失败', true);
+    else toast("Couldn't get the terminal's folder", true);
   },
   // 项目身份色：路径稳定哈希到色相——同一项目的标签色点永远一个色，扫一眼即配对
   hueOf(p) { let h = 0; for (let i = 0; i < (p || '').length; i++) h = (h * 31 + p.charCodeAt(i)) >>> 0; return h % 360; },
@@ -2317,7 +2306,7 @@ const term = {
     this.activate(id);
     updateWatches(); // 新终端的项目目录也纳入监听
     const r = await window.fanboxPty.spawn({ id, cwd: startDir, cols: xterm.cols, rows: xterm.rows });
-    if (!r.ok) { sess.dead = true; xterm.write('\r\n  \x1b[31m终端启动失败：' + (r.error || '') + '\x1b[0m\r\n'); }
+    if (!r.ok) { sess.dead = true; xterm.write('\r\n  \x1b[31mTerminal failed to start: ' + (r.error || '') + '\x1b[0m\r\n'); }
     else sess.cwd = r.cwd || startDir; // 末尾 renderTabs 统一带上 cwd 重画
     xterm.onData((d) => {
       if (sess.dead) { if (d === '\r' || d === '\n') this.respawn(sess); return; } // 进程退出后回车真重开
@@ -2430,7 +2419,7 @@ const term = {
     sess.dead = false;
     sess.xterm.reset(); // 清掉死亡残留，新 shell 提示符不和旧画面叠在一起
     const r = await window.fanboxPty.spawn({ id: sess.id, cwd: sess.startDir || state.cwd, cols: sess.xterm.cols, rows: sess.xterm.rows });
-    if (!r.ok) { sess.dead = true; sess.xterm.write('\x1b[31m重开失败：' + (r.error || '') + '\x1b[0m\r\n'); }
+    if (!r.ok) { sess.dead = true; sess.xterm.write('\x1b[31mRestart failed: ' + (r.error || '') + '\x1b[0m\r\n'); }
     else sess.cwd = r.cwd || sess.startDir;
   },
   activate(id) {
@@ -2522,11 +2511,11 @@ const term = {
         if (ask || dur > 1500) this.awaitGlow();
         if (ask) {
           playChime('ask'); // 非 done → 单音，和「完成」的双音区分开
-          if (!document.hasFocus() || s.id !== this.active) this.notify(s, '等待你确认', (s.title || 'shell') + ' 在等你拍板');
+          if (!document.hasFocus() || s.id !== this.active) this.notify(s, 'Waiting for your approval', (s.title || 'shell') + ' is waiting on you');
         } else if (dur > 4000) { // 跑了一会儿的真任务完成：文件区涟漪 + 极轻提示音 + 必要时系统通知
           rippleFileArea();
           playChime('done');
-          if (!document.hasFocus() || s.id !== this.active) this.notify(s, 'agent 任务完成', (s.title || 'shell') + ' 已空闲');
+          if (!document.hasFocus() || s.id !== this.active) this.notify(s, 'Agent task done', (s.title || 'shell') + ' is now idle');
         }
       });
       if (!anyBusy) { clearInterval(this._statusTimer); this._statusTimer = null; }
@@ -2546,11 +2535,11 @@ const term = {
       const t = document.createElement('div');
       const dotState = s.dead ? 'dead' : (s.status === 'busy' ? 'busy' : 'idle');
       t.className = 'term-tab' + (s.id === this.active ? ' active' : '') + (s.unread ? ' unread' : '');
-      const dotTitle = s.dead ? '进程已退出' : (s.status === 'busy' ? 'agent 运行中' : '空闲');
+      const dotTitle = s.dead ? 'Process exited' : (s.status === 'busy' ? 'Agent running' : 'Idle');
       // 终端图标按项目路径染色：同项目同色，和面包屑的配对色点呼应
       const hue = this.hueOf(s.cwd || s.startDir);
-      t.title = '双击：文件区跳到该终端所在目录';
-      t.innerHTML = `<span class="tab-dot ${dotState}" title="${dotTitle}"></span>${ic('term', `hsl(${hue} 62% 48%)`, 12)}<span>${escapeHtml(s.title)}</span><span class="tab-x" title="关闭">✕</span>`;
+      t.title = "Double-click: jump file view to this terminal's folder";
+      t.innerHTML = `<span class="tab-dot ${dotState}" title="${dotTitle}"></span>${ic('term', `hsl(${hue} 62% 48%)`, 12)}<span>${escapeHtml(s.title)}</span><span class="tab-x" title="Close">✕</span>`;
       t.onclick = (e) => { if (e.target.classList.contains('tab-x')) { this.closeTab(s.id); return; } this.activate(s.id); };
       t.ondblclick = (e) => { if (e.target.classList.contains('tab-x')) return; this.locateCwd(); };
       bar.appendChild(t);
@@ -2574,14 +2563,14 @@ const usagePanel = {
     const d = new Date(sec * 1000);
     const sameDay = d.toDateString() === new Date().toDateString();
     const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-    return (sameDay ? '' : '周' + '日一二三四五六'[d.getDay()] + ' ') + hm + ' 重置';
+    return 'Resets ' + (sameDay ? '' : ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getDay()] + ' ') + hm;
   },
   ago(ms) {
     const m = Math.round((Date.now() - ms) / 60000);
-    if (m < 2) return '刚刚';
-    if (m < 60) return m + ' 分钟前';
-    if (m < 1440) return Math.round(m / 60) + ' 小时前';
-    return Math.round(m / 1440) + ' 天前';
+    if (m < 2) return 'just now';
+    if (m < 60) return m + ' minute' + (m === 1 ? '' : 's') + ' ago';
+    if (m < 1440) return Math.round(m / 60) + ' hour' + (Math.round(m / 60) === 1 ? '' : 's') + ' ago';
+    return Math.round(m / 1440) + ' day' + (Math.round(m / 1440) === 1 ? '' : 's') + ' ago';
   },
   bar(label, pct, extra) {
     const v = Math.max(0, Math.min(100, Math.round(pct)));
@@ -2593,34 +2582,34 @@ const usagePanel = {
   },
   render(d) {
     const box = $('#usage-body');
-    if (!d || !d.ok) { box.innerHTML = '<div class="usage-sub">读取失败</div>'; return; }
+    if (!d || !d.ok) { box.innerHTML = '<div class="usage-sub">Read failed</div>'; return; }
     let h = '';
     if (d.codex) {
       const c = d.codex;
       h += `<div class="usage-agent">Codex${c.planType ? ` <i class="usage-plan">${escapeHtml(c.planType)}</i>` : ''}</div>`;
-      if (c.primary) h += this.bar('5h 窗口', c.primary.usedPercent, c.primary.stale ? '窗口已重置，跑一次 Codex 才有新数' : '');
-      if (c.secondary) h += this.bar('周配额', c.secondary.usedPercent, c.secondary.stale ? '窗口已重置，跑一次 Codex 才有新数' : this.fmtReset(c.secondary.resetsAt));
-      h += `<div class="usage-sub">快照：${this.ago(c.capturedAt)}的 Codex 会话</div>`;
+      if (c.primary) h += this.bar('5h window', c.primary.usedPercent, c.primary.stale ? 'Window reset — run Codex once for fresh numbers' : '');
+      if (c.secondary) h += this.bar('Weekly quota', c.secondary.usedPercent, c.secondary.stale ? 'Window reset — run Codex once for fresh numbers' : this.fmtReset(c.secondary.resetsAt));
+      h += `<div class="usage-sub">Snapshot: Codex session from ${this.ago(c.capturedAt)}</div>`;
     }
     if (d.claude) {
       const c = d.claude;
       h += `<div class="usage-agent">Claude Code</div>`;
       if (c.official) {
         // 官方限额窗口（和 Claude Code /usage 面板同源）：5h 滚动窗口 + 周配额，优先展示
-        if (c.official.fiveHour) h += this.bar('5h 窗口', c.official.fiveHour.usedPercent, this.fmtReset(c.official.fiveHour.resetsAt));
-        if (c.official.sevenDay) h += this.bar('周配额', c.official.sevenDay.usedPercent, this.fmtReset(c.official.sevenDay.resetsAt));
+        if (c.official.fiveHour) h += this.bar('5h window', c.official.fiveHour.usedPercent, this.fmtReset(c.official.fiveHour.resetsAt));
+        if (c.official.sevenDay) h += this.bar('Weekly quota', c.official.sevenDay.usedPercent, this.fmtReset(c.official.sevenDay.resetsAt));
       }
       if (c.last5h) {
         // 本地 token 统计照常保留（拿不到官方数据时就只剩这块）
         h += `<div class="usage-trio">
-          <span><b>${this.fmtTok(c.last5h.total)}</b>近5h</span>
-          <span><b>${this.fmtTok(c.today.total)}</b>今日</span>
-          <span><b>${this.fmtTok(c.week.total)}</b>本周</span>
+          <span><b>${this.fmtTok(c.last5h.total)}</b>last 5h</span>
+          <span><b>${this.fmtTok(c.today.total)}</b>today</span>
+          <span><b>${this.fmtTok(c.week.total)}</b>this week</span>
         </div>
-        <div class="usage-sub">token 总量 · 本地会话日志统计</div>`;
+        <div class="usage-sub">Total tokens · from local session logs</div>`;
       }
     }
-    if (!d.codex && !d.claude) h = '<div class="usage-sub">没找到 Claude Code / Codex 的本机会话记录</div>';
+    if (!d.codex && !d.claude) h = '<div class="usage-sub">No local Claude Code / Codex session logs found</div>';
     box.innerHTML = h;
   },
   async refresh() {
@@ -2650,8 +2639,8 @@ const skillsView = {
   async show() {
     state.skillsMode = true; state.recentMode = false; state.cursor = -1;
     renderBreadcrumb();
-    $('#file-area').innerHTML = '<div class="cmdk-loading">扫描本机 skills…</div>';
-    try { this.data = await api('/api/skills'); } catch { $('#file-area').innerHTML = '<div class="nav-empty">扫描失败</div>'; return; }
+    $('#file-area').innerHTML = '<div class="cmdk-loading">Scanning local skills…</div>';
+    try { this.data = await api('/api/skills'); } catch { $('#file-area').innerHTML = '<div class="nav-empty">Scan failed</div>'; return; }
     this.render();
   },
   async reload() {
@@ -2664,9 +2653,9 @@ const skillsView = {
   ago(t) {
     if (!t) return '—';
     const m = Math.round((Date.now() - t) / 60000);
-    if (m < 60) return m < 2 ? '刚刚' : m + ' 分钟前';
-    if (m < 1440) return Math.round(m / 60) + ' 小时前';
-    return Math.round(m / 1440) + ' 天前';
+    if (m < 60) return m < 2 ? 'just now' : m + ' minute' + (m === 1 ? '' : 's') + ' ago';
+    if (m < 1440) return Math.round(m / 60) + ' hour' + (Math.round(m / 60) === 1 ? '' : 's') + ' ago';
+    return Math.round(m / 1440) + ' day' + (Math.round(m / 1440) === 1 ? '' : 's') + ' ago';
   },
   rows() {
     let arr = (this.data.items || []).slice();
@@ -2691,75 +2680,75 @@ const skillsView = {
     const ratio = (o.budgetChars / o.budgetLimit).toFixed(1);
     let h = `<div class="sk-wrap">
       <div class="sk-stats">
-        <div class="sk-stat"><div class="sk-num">${o.unique}<small>/${o.total}</small></div><div class="sk-lbl">全部 skills</div><div class="sk-note">唯一 / 含跨端副本</div></div>
-        <div class="sk-stat"><div class="sk-num good">${o.active}</div><div class="sk-lbl">45 天内活跃</div><div class="sk-note">共 ${o.totalHits} 次触发</div></div>
-        <div class="sk-stat dust"><div class="sk-num">${o.dust}</div><div class="sk-lbl">在吃灰</div><div class="sk-note">45 天零触发</div></div>
-        <div class="sk-stat ${o.issues ? 'alert' : ''}"><div class="sk-num">${o.issues}</div><div class="sk-lbl">有问题</div><div class="sk-note">截断 / 缺 frontmatter / 残留</div></div>
+        <div class="sk-stat"><div class="sk-num">${o.unique}<small>/${o.total}</small></div><div class="sk-lbl">All skills</div><div class="sk-note">unique / incl. cross-CLI copies</div></div>
+        <div class="sk-stat"><div class="sk-num good">${o.active}</div><div class="sk-lbl">Active in 45 days</div><div class="sk-note">${o.totalHits} hit${o.totalHits === 1 ? '' : 's'} total</div></div>
+        <div class="sk-stat dust"><div class="sk-num">${o.dust}</div><div class="sk-lbl">Gathering dust</div><div class="sk-note">Zero hits in 45 days</div></div>
+        <div class="sk-stat ${o.issues ? 'alert' : ''}"><div class="sk-num">${o.issues}</div><div class="sk-lbl">Issues</div><div class="sk-note">truncated / missing frontmatter / residue</div></div>
         <div class="sk-budget">
-          <div class="sk-lbl" style="display:flex;justify-content:space-between"><span>Claude 常驻预算（描述总量）</span>${over ? `<b class="bad-t">≈超限 ${ratio}×</b>` : ''}</div>
+          <div class="sk-lbl" style="display:flex;justify-content:space-between"><span>Claude resident budget (total description size)</span>${over ? `<b class="bad-t">≈${ratio}× over</b>` : ''}</div>
           <div class="sk-bar"><i style="width:${Math.min(100, o.budgetChars / o.budgetLimit * 41)}%"></i><em></em></div>
-          <div class="sk-cap"><span>${o.budgetChars.toLocaleString()} 字符 / 预算约 ${o.budgetLimit.toLocaleString()}（估算）</span><span>${over ? '超出部分被静默丢弃，对应 skill 不会触发' : ''}</span></div>
+          <div class="sk-cap"><span>${o.budgetChars.toLocaleString()} chars / ~${o.budgetLimit.toLocaleString()} budget (est.)</span><span>${over ? 'Overflow is silently dropped — those skills never trigger' : ''}</span></div>
         </div>
       </div>
       <div class="sk-tools">
         <div class="sk-chips">
-          ${[['all', '全部', items.length],
-             ['claude', 'Claude 全局', cnt((x) => x.source === 'claude')],
-             ['project', '项目', cnt((x) => x.source === 'project')],
-             ['plugin', '插件', cnt((x) => x.source === 'plugin')],
+          ${[['all', 'All', items.length],
+             ['claude', 'Claude global', cnt((x) => x.source === 'claude')],
+             ['project', 'Project', cnt((x) => x.source === 'project')],
+             ['plugin', 'Plugin', cnt((x) => x.source === 'plugin')],
              ['codex', 'Codex', cnt((x) => x.source === 'codex' || x.source === 'agents')],
-             ['dup', '跨端重复', cnt((x) => x.copies)],
-             ['bad', '仅看问题', o.issues]]
+             ['dup', 'Cross-CLI dupes', cnt((x) => x.copies)],
+             ['bad', 'Issues only', o.issues]]
             .map(([k, lbl, n]) => `<button class="sk-chip ${this.filter === k ? 'on' : ''}" data-f="${k}">${lbl} <i>${n}</i></button>`).join('')}
         </div>
         <select class="sk-sort" id="sk-sort">
-          <option value="hits" ${this.sort === 'hits' ? 'selected' : ''}>按触发次数</option>
-          <option value="recent" ${this.sort === 'recent' ? 'selected' : ''}>按最后触发</option>
-          <option value="health" ${this.sort === 'health' ? 'selected' : ''}>按健康度</option>
-          <option value="name" ${this.sort === 'name' ? 'selected' : ''}>按名称</option>
+          <option value="hits" ${this.sort === 'hits' ? 'selected' : ''}>By hits</option>
+          <option value="recent" ${this.sort === 'recent' ? 'selected' : ''}>By last hit</option>
+          <option value="health" ${this.sort === 'health' ? 'selected' : ''}>By health</option>
+          <option value="name" ${this.sort === 'name' ? 'selected' : ''}>By name</option>
         </select>
       </div>
-      <div class="sk-thead"><span></span><span>Skill</span><span>来源</span><span class="r">45 天触发</span><span class="r">最后触发</span><span class="r">启用</span><span></span></div>`;
+      <div class="sk-thead"><span></span><span>Skill</span><span>Origin</span><span class="r">Hits (45d)</span><span class="r">Last hit</span><span class="r">On</span><span></span></div>`;
     let dustMarked = false;
     this.rows().forEach((it) => {
       if (this.sort === 'hits' && this.filter === 'all' && !dustMarked && it.hits === 0) {
-        h += `<div class="sk-mark">以下 ${o.dust} 个 45 天零触发——启用中的描述仍在每次会话占用预算</div>`;
+        h += `<div class="sk-mark">The ${o.dust} below had zero hits in 45 days — enabled descriptions still eat budget every session</div>`;
         dustMarked = true;
       }
       const key = it.dir;
-      const dot = it.issues.length ? (it.residue || it.issues.some((s) => s.includes('缺')) ? 'bad' : 'warn') : 'ok';
+      const dot = it.issues.length ? (it.residue || it.issues.some((s) => s.includes('Missing') || s.includes('missing')) ? 'bad' : 'warn') : 'ok';
       h += `<div class="sk-row ${this.open.has(key) ? 'expanded' : ''} ${it.disabled ? 'off' : ''}" data-dir="${escapeHtml(key)}" draggable="true">
         <span class="sk-dot ${dot}"></span>
         <div class="sk-name">
-          <div class="nm">${escapeHtml(it.name)}${it.copies ? ` <i class="sk-dup">${it.copies.length} 处副本</i>` : ''}${it.disabled ? ' <i class="sk-offtag">已停用</i>' : ''}</div>
+          <div class="nm">${escapeHtml(it.name)}${it.copies ? ` <i class="sk-dup">${it.copies.length} cop${it.copies.length === 1 ? 'y' : 'ies'}</i>` : ''}${it.disabled ? ' <i class="sk-offtag">disabled</i>' : ''}</div>
           <div class="ds">${escapeHtml(it.issues[0] || it.desc || '')}</div>
         </div>
         ${this.srcTag(it)}
         <div class="sk-hits ${it.hits ? '' : 'zero'}">${it.hits || '· 0 ·'}</div>
         <div class="sk-last">${this.ago(it.last)}</div>
         ${it.residue
-          ? '<div class="sk-last r">残留</div>'
-          : `<label class="sk-switch ${it.disabled ? '' : 'on'}" data-act="toggle" title="${it.disabled ? '启用（移回 skills 目录）' : '停用（移入 _disabled/，不删文件，立即对模型不可见）'}"><i></i></label>`}
+          ? '<div class="sk-last r">residue</div>'
+          : `<label class="sk-switch ${it.disabled ? '' : 'on'}" data-act="toggle" title="${it.disabled ? 'Enable (move back into skills folder)' : 'Disable (move into _disabled/ — files kept, instantly hidden from the model)'}"><i></i></label>`}
         <span class="sk-chev">▸</span>
       </div>`;
       if (this.open.has(key)) {
         const cut = this.data.overview.descCut;
         h += `<div class="sk-detail">
           <div>
-            <div class="fd">${escapeHtml(it.desc || '（无 description）')}${it.descLen > 240 ? '…' : ''}</div>
-            ${it.descLen > cut ? `<div class="fd-cut">⚠ description 共 ${it.descLen.toLocaleString()} 字符，第 ${cut.toLocaleString()} 字符之后模型看不见——靠后段触发词的场景不会触发</div>` : ''}
+            <div class="fd">${escapeHtml(it.desc || '(no description)')}${it.descLen > 240 ? '…' : ''}</div>
+            ${it.descLen > cut ? `<div class="fd-cut">⚠ description is ${it.descLen.toLocaleString()} chars; the model can't see past char ${cut.toLocaleString()} — trigger words in the tail will never fire</div>` : ''}
             ${it.issues.map((s) => `<div class="fd-cut">⚠ ${escapeHtml(s)}</div>`).join('')}
             <div class="fd-acts">
-              ${it.residue ? '' : '<button data-act="invoke" class="primary">▶ 终端调用</button>'}
-              <button data-act="reveal">在文件区显示</button>
-              ${it.residue ? '' : '<button data-act="edit">编辑 SKILL.md</button>'}
-              <button data-act="trash" class="danger">移到废纸篓</button>
+              ${it.residue ? '' : '<button data-act="invoke" class="primary">▶ Invoke in terminal</button>'}
+              <button data-act="reveal">Show in file view</button>
+              ${it.residue ? '' : '<button data-act="edit">Edit SKILL.md</button>'}
+              <button data-act="trash" class="danger">Move to Trash</button>
             </div>
           </div>
           <dl class="fd-meta">
-            <dt>描述体积</dt><dd>${it.descLen.toLocaleString()} 字符${it.descLen > cut ? ' · 超截断线' : ''}</dd>
-            <dt>路径</dt><dd class="mono">${escapeHtml(tilde(it.dir))}</dd>
-            ${it.copies ? `<dt>全部副本</dt><dd class="mono">${it.copies.map(escapeHtml).join('<br>')}</dd>` : ''}
+            <dt>Description size</dt><dd>${it.descLen.toLocaleString()} chars${it.descLen > cut ? ' · past cutoff' : ''}</dd>
+            <dt>Path</dt><dd class="mono">${escapeHtml(tilde(it.dir))}</dd>
+            ${it.copies ? `<dt>All copies</dt><dd class="mono">${it.copies.map(escapeHtml).join('<br>')}</dd>` : ''}
           </dl>
         </div>`;
       }
@@ -2786,8 +2775,8 @@ const skillsView = {
         e.stopPropagation();
         if (act.dataset.act === 'toggle') {
           const r = await apiPost('/api/skills/toggle', { dir, enable: it.disabled });
-          if (r.ok) { toast(it.disabled ? '已启用 ' + it.name : '已停用 ' + it.name + '（文件还在，随时可启用）'); this.reload(); }
-          else toast('操作失败：' + (r.error || ''), true);
+          if (r.ok) { toast(it.disabled ? 'Enabled ' + it.name : 'Disabled ' + it.name + ' (files kept — re-enable anytime)'); this.reload(); }
+          else toast('Action failed: ' + (r.error || ''), true);
         } else if (act.dataset.act === 'invoke') {
           invokeSkillInTerm(it.name);
         } else if (act.dataset.act === 'reveal') {
@@ -2797,11 +2786,11 @@ const skillsView = {
           const e2 = state.entries.find((x) => x.name === 'SKILL.md');
           if (e2) { state.selected = e2.path; openPreview(e2); renderFiles(); }
         } else if (act.dataset.act === 'trash') {
-          const ok = await confirmDialog(`把「${it.name}」移到废纸篓？（系统废纸篓里随时可恢复）`);
+          const ok = await confirmDialog(`Move "${it.name}" to Trash? (Restorable from the system Trash anytime)`);
           if (!ok) return;
           const r = await apiPost('/api/skills/trash', { dir });
-          if (r.ok) { toast('已移到废纸篓'); this.open.delete(dir); this.reload(); }
-          else toast('删除失败：' + (r.error || ''), true);
+          if (r.ok) { toast('Moved to Trash'); this.open.delete(dir); this.reload(); }
+          else toast('Delete failed: ' + (r.error || ''), true);
         }
         return;
       }
@@ -2822,30 +2811,30 @@ const skillsView = {
 
 // 把 skill 注入当前终端：claude 会话用 /name，codex 会话用 $name；裸 shell 提示先启动 agent
 async function invokeSkillInTerm(name) {
-  if (typeof term === 'undefined' || !term.available()) { toast('需要桌面版的内嵌终端', true); return; }
+  if (typeof term === 'undefined' || !term.available()) { toast("Requires the desktop app's embedded terminal", true); return; }
   if ($('#terminal-panel').classList.contains('hidden')) term.open();
   const s = term.sessions.find((x) => x.id === term.active);
-  if (!s || s.dead) { toast('先开一个终端并启动 agent', true); return; }
+  if (!s || s.dead) { toast('Open a terminal and start an agent first', true); return; }
   let prefix = '/';
   try {
     const r = await window.fanboxPty.proc(s.id);
     const pn = String((r && r.proc) || '').split('/').pop().replace(/^-/, '').toLowerCase();
     if (pn.includes('codex')) prefix = '$';
     else if (['zsh', 'bash', 'fish', 'sh', 'dash', 'tcsh', 'nu'].includes(pn)) {
-      toast('终端里还没启动 agent——先点 Claude / Codex 启动按钮', true);
+      toast('No agent running in this terminal yet — hit the Claude / Codex launch button first', true);
       s.xterm.focus();
       return;
     }
   } catch { /* 判断不了就按 claude 的 / 语法 */ }
   term.input(s.id, prefix + name + ' ');
   s.xterm.focus();
-  toast(`已注入 ${prefix}${name}，接着补一句话回车`);
+  toast(`Injected ${prefix}${name} — add a sentence and press Enter`);
 }
 
 // ---------- Monaco 编辑器（本地 vendor，离线可用；加载失败回退 textarea）----------
 const mona = {
   editor: null, _p: null,
-  themeFor: { terminal: 'fb-dark', warm: 'fb-paper', editorial: 'fb-editorial' },
+  themeFor: { terminal: 'fb-dark', warm: 'fb-paper' },
   themeName() { return this.themeFor[state.theme] || 'fb-dark'; },
   // 散文类（md/txt/字幕）默认软换行，代码不换行
   wraps(ex) { return ['md', 'markdown', 'txt', 'log', 'srt', 'vtt', 'ass'].includes(ex); },
@@ -2885,11 +2874,10 @@ const mona = {
     });
     return this._p;
   },
-  // 三皮肤各配一套编辑器配色，和文件区、终端区同呼吸
+  // 两皮肤各配一套编辑器配色，和文件区、终端区同呼吸
   defineThemes(m) {
     m.editor.defineTheme('fb-dark', { base: 'vs-dark', inherit: true, rules: [], colors: { 'editor.background': '#0b0c0a', 'editor.foreground': '#d6dac9', 'editorLineNumber.foreground': '#4a4d42', 'editorCursor.foreground': '#cdf24b', 'editor.selectionBackground': '#cdf24b33', 'editor.lineHighlightBackground': '#ffffff08' } });
     m.editor.defineTheme('fb-paper', { base: 'vs', inherit: true, rules: [], colors: { 'editor.background': '#ece2d2', 'editor.foreground': '#4a3f30', 'editorLineNumber.foreground': '#b3a589', 'editorCursor.foreground': '#cc785c', 'editor.selectionBackground': '#cc785c33', 'editor.lineHighlightBackground': '#00000008' } });
-    m.editor.defineTheme('fb-editorial', { base: 'vs', inherit: true, rules: [], colors: { 'editor.background': '#eae5d8', 'editor.foreground': '#1a1a1a', 'editorLineNumber.foreground': '#9a958a', 'editorCursor.foreground': '#ff433d', 'editor.selectionBackground': '#ff433d22', 'editor.lineHighlightBackground': '#00000008' } });
   },
   retheme() { if (this.editor && window.monaco) window.monaco.editor.setTheme(this.themeName()); },
   // 只读并排 diff：HEAD 版本 vs 工作区当前内容，复用 editor 槽位让 disposeIfAny 统一回收
@@ -2972,7 +2960,7 @@ function toggleChangesPanel() {
   pop.id = 'changes-pop';
   pop.className = 'changes-pop';
   if (!state.changeLog.length) {
-    pop.innerHTML = '<div class="cp-head">本会话变更</div><div class="cp-empty">还没有捕捉到文件变更。<br>跑起 agent，它改的文件会实时出现在这里。</div>';
+    pop.innerHTML = '<div class="cp-head">Changes this session</div><div class="cp-empty">No file changes captured yet.<br>Run an agent and its edits will show up here live.</div>';
   } else {
     const rows = state.changeLog.slice(0, 60).map((c) => {
       const inRepoHint = '';
@@ -2982,7 +2970,7 @@ function toggleChangesPanel() {
         <span class="cp-time">${fmtClock(c.ts)}</span>
       </div>`;
     }).join('');
-    pop.innerHTML = `<div class="cp-head">本会话变更 · ${state.changeLog.length}<span class="cp-head-btns"><button id="cp-replay" class="ghost-btn">▶ 回放</button><button id="cp-clear" class="ghost-btn">清空</button></span></div><div class="cp-list">${rows}</div>`;
+    pop.innerHTML = `<div class="cp-head">Changes this session · ${state.changeLog.length}<span class="cp-head-btns"><button id="cp-replay" class="ghost-btn">▶ Replay</button><button id="cp-clear" class="ghost-btn">Clear</button></span></div><div class="cp-list">${rows}</div>`;
   }
   document.body.appendChild(pop);
   const btn = $('#btn-changes'); const r = btn.getBoundingClientRect();
@@ -3008,17 +2996,17 @@ function toggleChangesPanel() {
 // WOW2 会话回放：像刷视频一样拖时间轴，重现这段时间 agent 一步步改了哪些文件
 function openReplay() {
   const tl = state.changeTimeline.slice();
-  if (tl.length < 2) { toast('变更太少，先让 agent 多改几下再回放', true); return; }
+  if (tl.length < 2) { toast('Not enough changes yet — let the agent edit a bit more before replaying', true); return; }
   const t0 = tl[0].ts, t1 = tl[tl.length - 1].ts;
   const span = Math.max(1000, t1 - t0);
   const ov = document.createElement('div');
   ov.className = 'replay-ov';
   ov.innerHTML =
     `<div class="replay-panel">
-      <div class="replay-head"><span>会话回放 · ${tl.length} 次写入 · 跨 ${fmtDur(span)}</span><button class="replay-close ghost-btn">关闭 (Esc)</button></div>
-      <div class="replay-now"><span class="rn-label">此刻 agent 正在改</span><span class="rn-file" id="replay-now">—</span></div>
+      <div class="replay-head"><span>Session replay · ${tl.length} write${tl.length === 1 ? '' : 's'} · over ${fmtDur(span)}</span><button class="replay-close ghost-btn">Close (Esc)</button></div>
+      <div class="replay-now"><span class="rn-label">Agent editing right now</span><span class="rn-file" id="replay-now">—</span></div>
       <div class="replay-track" id="replay-track"><div class="replay-fill" id="replay-fill"></div><div class="replay-playhead" id="replay-playhead"></div></div>
-      <div class="replay-ctl"><button id="replay-play" class="primary">▶ 播放</button><input type="range" id="replay-range" min="0" max="1000" value="1000"><span id="replay-count" class="replay-count"></span></div>
+      <div class="replay-ctl"><button id="replay-play" class="primary">▶ Play</button><input type="range" id="replay-range" min="0" max="1000" value="1000"><span id="replay-count" class="replay-count"></span></div>
       <div class="replay-list" id="replay-list"></div>
     </div>`;
   document.body.appendChild(ov);
@@ -3040,11 +3028,11 @@ function openReplay() {
     const recent = tl.slice(Math.max(0, lastIdx - 5), lastIdx + 1).reverse();
     ov.querySelector('#replay-list').innerHTML = recent.map((e, i) => `<div class="rl-row${i === 0 ? ' rl-now' : ''}"><span>${escapeHtml(e.name)}</span><span class="rl-t">${fmtClock(e.ts)}</span></div>`).join('');
   };
-  const stop = () => { playing = false; if (raf) cancelAnimationFrame(raf); raf = null; playBtn.textContent = '▶ 播放'; };
+  const stop = () => { playing = false; if (raf) cancelAnimationFrame(raf); raf = null; playBtn.textContent = '▶ Play'; };
   const step = () => {
     const elapsed = perfNow() - startWall;
     let frac = startFrac + elapsed / DURATION;
-    if (frac >= 1) { frac = 1; render(frac); range.value = 1000; stop(); playBtn.textContent = '↻ 重播'; return; }
+    if (frac >= 1) { frac = 1; render(frac); range.value = 1000; stop(); playBtn.textContent = '↻ Replay'; return; }
     range.value = String(Math.round(frac * 1000));
     render(frac);
     raf = requestAnimationFrame(step);
@@ -3052,7 +3040,7 @@ function openReplay() {
   playBtn.onclick = () => {
     if (playing) { stop(); return; }
     let frac = Number(range.value) / 1000; if (frac >= 1) frac = 0;
-    startFrac = frac; startWall = perfNow(); playing = true; playBtn.textContent = '⏸ 暂停';
+    startFrac = frac; startWall = perfNow(); playing = true; playBtn.textContent = '⏸ Pause';
     raf = requestAnimationFrame(step);
   };
   range.oninput = () => { stop(); render(Number(range.value) / 1000); };
@@ -3065,9 +3053,9 @@ function openReplay() {
 }
 function fmtDur(ms) {
   const s = Math.round(ms / 1000);
-  if (s < 60) return s + ' 秒';
+  if (s < 60) return s + ' s';
   const m = Math.round(s / 60);
-  return m < 60 ? m + ' 分钟' : (m / 60).toFixed(1) + ' 小时';
+  return m < 60 ? m + ' min' : (m / 60).toFixed(1) + ' hr';
 }
 function perfNow() { return (window.performance && performance.now) ? performance.now() : Date.now(); }
 // 从文件名粗判类型（变更项可能不在当前 entries 里）
@@ -3333,9 +3321,9 @@ if (window.fanboxPty) {
     const s = term.sessions.find((x) => x.id === id);
     if (s) {
       s.dead = true; s.status = 'dead';
-      s.xterm.write('\r\n\x1b[90m[进程已退出 — 回车重开，或 ✕ 关闭]\x1b[0m\r\n');
+      s.xterm.write('\r\n\x1b[90m[Process exited — Enter to restart, or ✕ to close]\x1b[0m\r\n');
       term.renderTabs();
-      term.notify(s, '终端已退出', (s.title || 'shell') + ' 的进程结束了');
+      term.notify(s, 'Terminal exited', 'Process in ' + (s.title || 'shell') + ' ended');
     }
   });
 }
@@ -3443,7 +3431,7 @@ function bindUpdateNotice() {
     if (localStorage.getItem('fb_skip_ver') === version || document.querySelector('.update-pill')) return;
     const bar = document.createElement('div');
     bar.className = 'update-pill';
-    bar.innerHTML = `<span>新版本 v${escapeHtml(version)} 已发布</span><button class="up-go">去下载</button><button class="up-x" title="这个版本不再提醒">✕</button>`;
+    bar.innerHTML = `<span>v${escapeHtml(version)} is out</span><button class="up-go">Download</button><button class="up-x" title="Don't remind me for this version">✕</button>`;
     document.body.appendChild(bar);
     bar.querySelector('.up-go').onclick = () => { window.fanboxUpdate.open(url); bar.remove(); };
     bar.querySelector('.up-x').onclick = () => { localStorage.setItem('fb_skip_ver', version); bar.remove(); };

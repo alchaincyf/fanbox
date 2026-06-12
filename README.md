@@ -22,7 +22,7 @@ Every time the agent writes a file, its card lights up — *find files → run a
 
 <br>
 
-[⬇ Download dmg](https://github.com/alchaincyf/fanbox/releases/latest) · [Screenshots](#three-skins) · [Features](#what-it-does) · [Install](#install) · [Credits](#standing-on-the-shoulders-of-giants)
+[⬇ Download dmg](https://github.com/alchaincyf/fanbox/releases/latest) · [Screenshots](#two-skins) · [Features](#what-it-does) · [Install](#install) · [Credits](#standing-on-the-shoulders-of-giants)
 
 </div>
 
@@ -44,15 +44,14 @@ FanBox folds that loop into one window: **files on the left × terminal on the r
 
 No cloud, no remote, no accounts. Local-first, zero config, zero runtime dependencies.
 
-## Three skins
+## Two skins
 
-The UI was designed with [huashu-design](https://github.com/alchaincyf/huashu-design). The three skins are not theme-color swaps — palette, typography, icons, code highlighting and terminal ANSI themes all change together:
+The UI was designed with [huashu-design](https://github.com/alchaincyf/huashu-design). The two skins are not theme-color swaps — palette, typography, icons, code highlighting and terminal ANSI themes all change together:
 
 | | |
 |---|---|
 | <img src="assets/screenshot-volt.png" alt="Volt skin"> | **Volt** · neon green × charcoal × monospace, industrial instrument panel (default) |
 | <img src="assets/screenshot-archive.png" alt="Archive skin"> | **Archive** · cream paper × terracotta × serif, a warm paper archive |
-| <img src="assets/screenshot-index.png" alt="Index skin"> | **Index** · black & white × signal red/green × oversized type, editorial index daily |
 
 ## What it does
 
@@ -67,7 +66,6 @@ The UI was designed with [huashu-design](https://github.com/alchaincyf/huashu-de
 ### Watch what the agent changed
 
 - **A live dashboard** — every file the agent writes makes its card ripple and glow by change frequency; the light follows wherever the agent goes.
-- **Follow mode** — one click and the file view + preview track whatever file the agent edits: code scrolls with freshly written lines flashing, HTML renders as a live web page while it's being written (double-buffered, zero white flash), Markdown renders live. Any manual browsing hands control back to you instantly.
 - **Session replay** — drag the timeline like scrubbing a video to replay which files the agent touched, step by step.
 - **Change inbox** — all files modified this session, aggregated across projects, for parallel agent runs.
 - **Git diff** — Monaco read-only DiffEditor, HEAD vs working tree side by side.
@@ -225,15 +223,14 @@ FanBox 把这条链路收进一个窗口：**左边文件 × 右边/下边终端
 
 不做云、不做远程、不做账号。本地、零配置、运行时零依赖。
 
-## 三套皮肤
+## 两套皮肤
 
-界面在 [huashu-design](https://github.com/alchaincyf/huashu-design) 辅助下完成设计，三套皮肤不是换个主题色——配色、字体、图标、代码高亮、终端 ANSI 主题整体随之变化：
+界面在 [huashu-design](https://github.com/alchaincyf/huashu-design) 辅助下完成设计，两套皮肤不是换个主题色——配色、字体、图标、代码高亮、终端 ANSI 主题整体随之变化：
 
 | | |
 |---|---|
 | <img src="assets/screenshot-volt.png" alt="终端皮肤"> | **终端** · Volt 荧光绿 × 炭黑 × 等宽字，工业仪器面板感（默认） |
 | <img src="assets/screenshot-archive.png" alt="档案皮肤"> | **档案** · 奶油纸 × 赤陶橙 × 衬线，温暖纸感档案馆 |
-| <img src="assets/screenshot-index.png" alt="索引皮肤"> | **索引** · 黑白 × 信号红/绿 × 巨号字，编辑式索引日报 |
 
 ## 能做什么
 
@@ -324,7 +321,7 @@ npm run dist         # 打包签名 .dmg（产物在 dist/，不入 git，统一
 
 ## 设计与验收
 
-界面设计在 **[huashu-design](https://github.com/alchaincyf/huashu-design)** 辅助下完成——三套皮肤的方向探索、组件质感、反 AI slop 审查都出自它的工作流。图标是档案暖色陶土箱体 + 米纸 squircle，从 SVG 一路生成到 icns。
+界面设计在 **[huashu-design](https://github.com/alchaincyf/huashu-design)** 辅助下完成——两套皮肤的方向探索、组件质感、反 AI slop 审查都出自它的工作流。图标是档案暖色陶土箱体 + 米纸 squircle，从 SVG 一路生成到 icns。
 
 每个开发阶段由 **5 个独立 subagent** 扮演不同角色（重度 vibe coder / 原生审美设计师 / 零文档新用户 / 终端十年老兵 / 破坏性质量官），审「成品 + 真机截图 + 代码」打分，**全部 ≥90 分且无红线才算达标**。评分标准见 `docs/05-验收角色与评分标准.md`。
 

@@ -21,6 +21,7 @@ const PORT = Number(process.env.FANBOX_PORT) || 4567;
 const CONFIG_DIR = path.join(HOME, '.fanbox');
 const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
 const THUMB_DIR = path.join(CONFIG_DIR, 'thumbs');
+const LANG_PACK_DIR = path.join(CONFIG_DIR, 'lang-packs');
 const PUBLIC = path.join(__dirname, 'public');
 const PLATFORM = process.platform;
 
@@ -92,7 +93,7 @@ function kindOf(name, isDir) {
 // 但拒绝空字节这种明显异常输入。
 function resolvePath(p) {
   if (!p || typeof p !== 'string') return HOME;
-  if (p.includes('\0')) throw new Error('非法路径');
+  if (p.includes('\0')) throw new Error('Invalid path');
   let abs = p.startsWith('~') ? path.join(HOME, p.slice(1)) : p;
   if (!path.isAbsolute(abs)) abs = path.join(HOME, abs);
   return path.normalize(abs);
@@ -131,6 +132,69 @@ function sendJSON(res, code, obj) {
   const body = JSON.stringify(obj);
   res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8' });
   res.end(body);
+}
+
+// ---------- 语言包：导入/列表/读取 ----------
+// 自定义语言包持久化在 ~/.fanbox/lang-packs/<id>.json，走与 config.json 相同的「temp + rename」原子写。
+const LANG_PACK_ID_RE = /^[a-z0-9-]{1,40}$/;
+const LANG_TAG_RE = /^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$/;
+const MAX_LANG_PACK_SIZE = 1024 * 1024; // 1MB
+
+function validateLangPack(pack) {
+  if (!pack || typeof pack !== 'object') return 'Language pack must be a JSON object';
+  if (pack.base !== 'en') return 'this pack targets an old FanBox text base — please get a pack updated for the English base (base: "en")';
+  if (typeof pack.id !== 'string' || !LANG_PACK_ID_RE.test(pack.id)) return 'id has an invalid format (lowercase letters/digits/- only, 1-40 chars)';
+  if (typeof pack.name !== 'string' || !pack.name) return 'name cannot be empty';
+  if (typeof pack.lang !== 'string' || !LANG_TAG_RE.test(pack.lang)) return 'lang is not a valid language tag (e.g. zh-TW)';
+  if (!pack.dict || typeof pack.dict !== 'object' || Array.isArray(pack.dict)) return 'dict must be a flat object';
+  for (const [k, v] of Object.entries(pack.dict)) {
+    if (typeof k !== 'string' || !k || typeof v !== 'string' || !v) return 'dict keys and values must all be non-empty strings';
+  }
+  if (pack.rules !== undefined) {
+    if (!Array.isArray(pack.rules)) return 'rules must be an array';
+    for (const r of pack.rules) {
+      if (!Array.isArray(r) || r.length !== 2 || typeof r[0] !== 'string' || typeof r[1] !== 'string') return 'each item in rules must be [regex string, replacement string]';
+      try { new RegExp(r[0]); } catch { return `Invalid regex in rules: ${r[0]}`; }
+    }
+  }
+  if (Buffer.byteLength(JSON.stringify(pack), 'utf8') > MAX_LANG_PACK_SIZE) return 'Language pack is too large (1MB limit)';
+  return null;
+}
+
+async function writeLangPack(pack) {
+  await fsp.mkdir(LANG_PACK_DIR, { recursive: true });
+  const file = path.join(LANG_PACK_DIR, `${pack.id}.json`);
+  const tmp = `${file}.tmp-${process.pid}-${Date.now()}`;
+  try {
+    const fh = await fsp.open(tmp, 'w');
+    try { await fh.writeFile(JSON.stringify(pack, null, 2)); await fh.sync(); } finally { await fh.close(); }
+    await fsp.rename(tmp, file);
+  } catch (e) { await fsp.unlink(tmp).catch(() => {}); throw e; }
+}
+
+async function listLangPacks() {
+  const packs = [];
+  let entries;
+  try { entries = await fsp.readdir(LANG_PACK_DIR); } catch { return packs; }
+  for (const name of entries) {
+    if (!name.endsWith('.json')) continue;
+    try {
+      const raw = await fsp.readFile(path.join(LANG_PACK_DIR, name), 'utf8');
+      const pack = JSON.parse(raw);
+      if (pack && typeof pack.id === 'string' && typeof pack.name === 'string' && typeof pack.lang === 'string') {
+        packs.push({ id: pack.id, name: pack.name, lang: pack.lang });
+      }
+    } catch { /* 跳过无法解析的文件 */ }
+  }
+  return packs;
+}
+
+async function readLangPack(id) {
+  if (!LANG_PACK_ID_RE.test(id)) return null;
+  try {
+    const raw = await fsp.readFile(path.join(LANG_PACK_DIR, `${id}.json`), 'utf8');
+    return JSON.parse(raw);
+  } catch { return null; }
 }
 
 // ---------- 业务逻辑 ----------
@@ -220,7 +284,7 @@ async function readFile(filePath) {
       let end = bytesRead;
       while (end > 0 && (buf[end - 1] & 0xC0) === 0x80) end--;
       if (end > 0 && (buf[end - 1] & 0xC0) === 0xC0) end--;
-      info.content = buf.toString('utf8', 0, end) + '\n\n… (文件较大，仅显示前 256KB)';
+      info.content = buf.toString('utf8', 0, end) + '\n\n… (file is large, showing first 256KB only)';
     } else {
       info.content = await fsp.readFile(file, 'utf8');
     }
@@ -408,14 +472,14 @@ async function recentFiles(rootPath) {
 
 async function writeTextFile(p, content, expectedMtime) {
   const file = resolvePath(p);
-  if (!TEXT_EXT.has(ext(file))) throw new Error('只支持文本类文件编辑');
-  if (typeof content !== 'string') throw new Error('内容非法');
+  if (!TEXT_EXT.has(ext(file))) throw new Error('Only text files can be edited');
+  if (typeof content !== 'string') throw new Error('Invalid content');
   // 并发覆盖保护：打开编辑后文件被外部（agent）改过或删除，拒绝盲覆盖
   if (expectedMtime) {
     let cur = 0, missing = false;
     try { cur = (await fsp.stat(file)).mtimeMs; } catch { missing = true; }
     if (missing || (cur && Math.abs(cur - expectedMtime) > 1)) {
-      const e = new Error(missing ? '文件已被外部删除' : '文件已被外部修改'); e.conflict = true; throw e;
+      const e = new Error(missing ? 'File was deleted externally' : 'File was modified externally'); e.conflict = true; throw e;
     }
   }
   // 原子写：临时文件 + fsync + rename，写到一半崩溃也不会损坏原文件
@@ -436,9 +500,9 @@ async function writeTextFile(p, content, expectedMtime) {
 function trashPath(p) {
   return new Promise((resolve) => {
     let target;
-    try { target = resolvePath(p); } catch { return resolve({ ok: false, error: '非法路径' }); }
+    try { target = resolvePath(p); } catch { return resolve({ ok: false, error: 'Invalid path' }); }
     let isDir = false;
-    try { isDir = fs.lstatSync(target).isDirectory(); } catch { return resolve({ ok: false, error: '文件不存在' }); }
+    try { isDir = fs.lstatSync(target).isDirectory(); } catch { return resolve({ ok: false, error: 'File does not exist' }); }
     let cmd;
     if (PLATFORM === 'darwin') {
       // 路径走 argv，不拼进单引号 AppleScript 字面量——避免含 ' 的文件名删除失败/注入
@@ -456,7 +520,7 @@ function trashPath(p) {
       let msg = err.message;
       // Finder 自动化未授权（-1743/-600）给人话
       if (PLATFORM === 'darwin' && /-1743|-600|not allowed|authoriz/i.test(msg)) {
-        msg = '需在「系统设置 → 隐私与安全性 → 自动化」里允许 FanBox 控制 Finder（首次删除会弹授权）';
+        msg = 'Allow FanBox to control Finder in System Settings → Privacy & Security → Automation (first deletion will prompt for authorization)';
       }
       resolve({ ok: false, error: msg });
     });
@@ -472,9 +536,9 @@ function validName(name) {
 async function renamePath(p, newName) {
   const src = resolvePath(p);
   newName = (newName || '').trim();
-  if (!validName(newName)) throw new Error('名称不合法');
+  if (!validName(newName)) throw new Error('Invalid name');
   const dst = path.join(path.dirname(src), newName);
-  if (fs.existsSync(dst)) throw new Error('已存在同名项');
+  if (fs.existsSync(dst)) throw new Error('An item with this name already exists');
   await fsp.rename(src, dst);
   return { ok: true, path: dst };
 }
@@ -545,7 +609,7 @@ async function organizeLaunch(b) {
     const alt = engine === 'claude' ? 'codex' : 'claude';
     bin = await findAgentBin(alt);
     if (bin) engine = alt;
-    else return { ok: false, error: '没找到 claude / codex 命令——AI 整理需要装其中一个 CLI' };
+    else return { ok: false, error: "Couldn't find the claude / codex command — AI organize needs one of these CLIs installed" };
   }
   const prefs = await fsp.readFile(ORGANIZE_PREFS_FILE, 'utf8').catch(() => '');
   const history = await organizeHistory();
@@ -591,7 +655,7 @@ async function releaseInspect(p) {
   const sh = (cmd, args) => new Promise((resolve) => execFile(cmd, args, { cwd: dir, timeout: 8000 }, (err, stdout) => resolve(err ? null : String(stdout).trim())));
   let pkg;
   try { pkg = JSON.parse(await fsp.readFile(path.join(dir, 'package.json'), 'utf8')); }
-  catch { return { ok: false, error: '这里没有 package.json——发版向导目前只认 node 项目' }; }
+  catch { return { ok: false, error: "No package.json here — the release wizard only supports node projects" }; }
   const out = { ok: true, dir, name: pkg.name || path.basename(dir), version: pkg.version || '0.0.0' };
   out.hasDist = !!(pkg.scripts && pkg.scripts.dist);
   out.remote = await sh('git', ['remote', 'get-url', 'origin']);
@@ -613,13 +677,13 @@ async function releaseInspect(p) {
 async function releasePrepare(b) {
   const dir = resolvePath(b.path);
   const version = String(b.version || '').trim();
-  if (!/^\d+\.\d+\.\d+/.test(version)) return { ok: false, error: '版本号格式不对（要 x.y.z）' };
+  if (!/^\d+\.\d+\.\d+/.test(version)) return { ok: false, error: 'Version format is wrong (expected x.y.z)' };
   const notes = String(b.notes || '').trim();
   // 1) package.json 版本号
   const pkgFile = path.join(dir, 'package.json');
   let pkgRaw;
-  try { pkgRaw = await fsp.readFile(pkgFile, 'utf8'); } catch { return { ok: false, error: '读不到 package.json' }; }
-  if (!/"version"\s*:\s*"[^"]*"/.test(pkgRaw)) return { ok: false, error: 'package.json 里没有 version 字段' };
+  try { pkgRaw = await fsp.readFile(pkgFile, 'utf8'); } catch { return { ok: false, error: "Can't read package.json" }; }
+  if (!/"version"\s*:\s*"[^"]*"/.test(pkgRaw)) return { ok: false, error: 'package.json has no version field' };
   await fsp.writeFile(pkgFile, pkgRaw.replace(/"version"\s*:\s*"[^"]*"/, `"version": "${version}"`), 'utf8');
   // 2) CHANGELOG：Unreleased 段落升格为新版本，开新的空 Unreleased
   const clFile = path.join(dir, 'CHANGELOG.md');
@@ -641,7 +705,7 @@ async function releasePrepare(b) {
   const title = (firstBullet || firstPlain || '').replace(/^[#\-*\s]+/, '').slice(0, 60);
   const steps = [];
   if (b.doDist) steps.push('npm run dist');
-  steps.push('git add -A', `git commit -m ${shellQuote(`v${version}: ${title || '发版'}`)}`);
+  steps.push('git add -A', `git commit -m ${shellQuote(`v${version}: ${title || 'Release'}`)}`);
   if (b.doPush) steps.push('git push');
   if (b.doRelease) steps.push(`gh release create v${version} --title ${shellQuote(`v${version}${title ? ' · ' + title : ''}`)} --notes-file ${shellQuote(notesFile)}${b.doDist ? ` dist/*${version}*.dmg` : ''}`);
   return { ok: true, cmd: steps.join(' && ') };
@@ -786,7 +850,7 @@ async function projectMemory(p) {
 async function diskUsage(p) {
   const dir = resolvePath(p);
   let names;
-  try { names = await fsp.readdir(dir, { withFileTypes: true }); } catch (e) { return { ok: false, error: '读取失败：' + e.message }; }
+  try { names = await fsp.readdir(dir, { withFileTypes: true }); } catch (e) { return { ok: false, error: 'Read failed: ' + e.message }; }
   const dirs = [], items = [];
   await Promise.all(names.map(async (d) => {
     const full = path.join(dir, d.name);
@@ -810,7 +874,7 @@ async function diskUsage(p) {
 // 压缩包内容清单：全用系统自带工具（unzip / bsdtar / gzip），保持零依赖
 async function archiveList(p) {
   const file = resolvePath(p);
-  try { await fsp.stat(file); } catch { return { ok: false, error: '文件不存在' }; }
+  try { await fsp.stat(file); } catch { return { ok: false, error: 'File does not exist' }; }
   const name = path.basename(file).toLowerCase();
   const run = (cmd, args) => new Promise((resolve, reject) => {
     execFile(cmd, args, { timeout: 15000, maxBuffer: 8 * 1024 * 1024 }, (err, stdout) => (err ? reject(err) : resolve(stdout)));
@@ -836,10 +900,10 @@ async function archiveList(p) {
       const m = out.split('\n')[1] && out.split('\n')[1].match(/^\s*\d+\s+(\d+)/);
       entries.push({ name: path.basename(file, '.gz'), size: m ? Number(m[1]) : undefined });
     } else {
-      return { ok: false, error: '7z / rar 没有系统自带的解析工具，可在系统解压软件中打开' };
+      return { ok: false, error: '7z / rar have no built-in parser — open with a system archive utility instead' };
     }
   } catch (e) {
-    return { ok: false, error: '读取失败：' + (e.message || '').split('\n')[0] };
+    return { ok: false, error: 'Read failed: ' + (e.message || '').split('\n')[0] };
   }
   const truncated = entries.length > MAX;
   return { ok: true, entries: entries.slice(0, MAX), truncated };
@@ -848,7 +912,7 @@ async function archiveList(p) {
 // 移动文件到目标目录（截图直通车「收进素材」等用）：同卷 rename，跨卷回退拷贝；同名自动加序号防覆盖
 async function movePath(src, dstDir) {
   const s = resolvePath(src), d = resolvePath(dstDir);
-  if (!fs.existsSync(s)) return { ok: false, error: '源文件不存在' };
+  if (!fs.existsSync(s)) return { ok: false, error: 'Source file does not exist' };
   await fsp.mkdir(d, { recursive: true });
   let dst = path.join(d, path.basename(s));
   if (fs.existsSync(dst)) {
@@ -867,9 +931,9 @@ async function movePath(src, dstDir) {
 async function createEntry(parentPath, name, type) {
   const parent = resolvePath(parentPath);
   name = (name || '').trim();
-  if (!validName(name)) throw new Error('名称不合法');
+  if (!validName(name)) throw new Error('Invalid name');
   const target = path.join(parent, name);
-  if (fs.existsSync(target)) throw new Error('已存在同名项');
+  if (fs.existsSync(target)) throw new Error('An item with this name already exists');
   if (type === 'dir') await fsp.mkdir(target);
   else await fsp.writeFile(target, '', { flag: 'wx' });
   return { ok: true, path: target, isDir: type === 'dir' };
@@ -994,13 +1058,13 @@ async function gitFileDiff(p) {
 // 图片编辑保存：前端 canvas 导出 dataURL（已含格式/尺寸/质量/标注），这里原子写回
 async function saveImage({ path: target, dataUrl, newName }) {
   const m = /^data:image\/\w+;base64,(.+)$/s.exec(dataUrl || '');
-  if (!m) throw new Error('无效图片数据');
+  if (!m) throw new Error('Invalid image data');
   const buf = Buffer.from(m[1], 'base64');
   let dest = resolvePath(target);
   if (newName) {
-    if (!validName(newName)) throw new Error('文件名不合法');
+    if (!validName(newName)) throw new Error('Invalid file name');
     dest = path.join(path.dirname(dest), newName);
-    if (fs.existsSync(dest)) throw new Error('已存在同名文件');
+    if (fs.existsSync(dest)) throw new Error('A file with this name already exists');
   }
   const tmp = `${dest}.fanbox-tmp-${process.pid}-${Date.now()}`;
   try {
@@ -1066,12 +1130,12 @@ function shellQuote(s) {
 
 function defaultRoots() {
   const candidates = [
-    ['主目录', HOME],
-    ['桌面', path.join(HOME, 'Desktop')],
-    ['文档', path.join(HOME, 'Documents')],
-    ['下载', path.join(HOME, 'Downloads')],
-    ['代码 / Code', path.join(HOME, 'Code')],
-    ['项目 / Projects', path.join(HOME, 'Projects')],
+    ['Home', HOME],
+    ['Desktop', path.join(HOME, 'Desktop')],
+    ['Documents', path.join(HOME, 'Documents')],
+    ['Downloads', path.join(HOME, 'Downloads')],
+    ['Code', path.join(HOME, 'Code')],
+    ['Projects', path.join(HOME, 'Projects')],
     ['Developer', path.join(HOME, 'Developer')],
   ];
   return candidates
@@ -1516,7 +1580,7 @@ async function scanSkillRoot(root, source, label, out, disabled = false) {
     if (!isDir) {
       if (/\.md$/i.test(n.name)) continue; // 根目录的说明文档不算残留
       out.push({ name: n.name, dir: fp, source, label, disabled, residue: true, desc: '', descLen: 0, mtime: 0,
-        issues: ['残留文件——不是有效 skill，只占目录'] });
+        issues: ['Residue file — not a valid skill, just taking up space in the directory'] });
       continue;
     }
     const item = { name: n.name, dir: fp, source, label, disabled, residue: false, desc: '', descLen: 0, mtime: 0, issues: [] };
@@ -1533,17 +1597,17 @@ async function scanSkillRoot(root, source, label, out, disabled = false) {
       } finally { await fh.close(); }
       const fm = skillFrontmatter(head);
       if (!fm || !fm.desc) {
-        item.issues.push('SKILL.md 缺 frontmatter description——模型的技能清单里看不到它，只能手动调用');
+        item.issues.push("SKILL.md is missing frontmatter description — the model can't see it in its skill list, only manual invocation works");
       } else {
         item.desc = fm.desc.slice(0, 240);
         item.descLen = fm.desc.length;
         if (fm.desc.length > SKILL_DESC_CUT) {
-          item.issues.push(`description ${fm.desc.length.toLocaleString()} 字符，超过 ${SKILL_DESC_CUT} 截断线——第 ${SKILL_DESC_CUT} 字符之后的触发词模型看不见`);
+          item.issues.push(`description is ${fm.desc.length.toLocaleString()} chars; the model can't see past char ${SKILL_DESC_CUT.toLocaleString()} — trigger words in the tail will never fire`);
         }
       }
     } catch {
       item.residue = true;
-      item.issues.push('缺 SKILL.md——不是有效 skill');
+      item.issues.push('Missing SKILL.md — not a valid skill');
     }
     out.push(item);
   }
@@ -1728,7 +1792,7 @@ async function validateSkillDir(dir) {
   if (!skillsCache.data) await skillsData();
   const target = path.resolve(String(dir || ''));
   const it = (skillsCache.data.items || []).find((x) => x.dir === target);
-  if (!it) return { ok: false, error: '不在已扫描的 skills 清单里' };
+  if (!it) return { ok: false, error: 'Not in the scanned skills list' };
   return { ok: true, item: it };
 }
 
@@ -1736,13 +1800,13 @@ async function skillToggle(dir, enable) {
   const v = await validateSkillDir(dir);
   if (!v.ok) return v;
   const it = v.item;
-  if (it.residue) return { ok: false, error: '残留文件不能启停，请直接清理' };
+  if (it.residue) return { ok: false, error: "Residue files can't be enabled/disabled — clean them up directly" };
   if (!!enable === !it.disabled) return { ok: true, dir: it.dir }; // 已是目标状态
   const root = it.disabled ? path.dirname(path.dirname(it.dir)) : path.dirname(it.dir);
   const dest = enable ? path.join(root, it.name) : path.join(root, '_disabled', it.name);
   try {
     if (!enable) await fsp.mkdir(path.join(root, '_disabled'), { recursive: true });
-    await fsp.access(dest).then(() => { throw new Error('目标位置已有同名目录'); }, () => {});
+    await fsp.access(dest).then(() => { throw new Error('A directory with this name already exists at the destination'); }, () => {});
     // skills.sh 等安装器装的是相对路径 symlink（../../.agents/...）——直接 rename 会因层级变化断链，
     // 改为解析出绝对目标后删旧链建新链；真实目录才走 rename
     const lst = await fsp.lstat(it.dir);
@@ -1888,9 +1952,35 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === '/api/lang' && req.method === 'POST') {
       const b = await readBody(req);
-      const lang = b.lang === 'en' ? 'en' : 'zh';
-      await updateConfig((c) => { c.lang = lang; });
+      const custom = typeof b.lang === 'string' && /^custom:[a-z0-9-]{1,40}$/.test(b.lang) && LANG_PACK_ID_RE.test(b.lang.slice(7));
+      const lang = b.lang === 'en' || custom ? b.lang : 'zh';
+      await updateConfig((c) => {
+        c.lang = lang;
+        if (custom && typeof b.langTag === 'string' && LANG_TAG_RE.test(b.langTag)) c.langTag = b.langTag;
+        else delete c.langTag;
+      });
       return sendJSON(res, 200, { ok: true, lang });
+    }
+    if (p === '/api/lang-pack/import' && req.method === 'POST') {
+      const pack = await readBody(req);
+      const err = validateLangPack(pack);
+      if (err) return sendJSON(res, 200, { ok: false, error: err });
+      try {
+        await writeLangPack(pack);
+        return sendJSON(res, 200, { ok: true, id: pack.id });
+      } catch (e) {
+        return sendJSON(res, 200, { ok: false, error: String(e.message || e) });
+      }
+    }
+    if (p === '/api/lang-packs') {
+      return sendJSON(res, 200, { ok: true, packs: await listLangPacks() });
+    }
+    if (p === '/api/lang-pack') {
+      const id = url.searchParams.get('id') || '';
+      if (!LANG_PACK_ID_RE.test(id)) return sendJSON(res, 200, { ok: false });
+      const pack = await readLangPack(id);
+      if (!pack) return sendJSON(res, 200, { ok: false });
+      return sendJSON(res, 200, pack);
     }
     if (p === '/api/organize/launch' && req.method === 'POST') {
       return sendJSON(res, 200, await organizeLaunch(await readBody(req)));
@@ -1963,21 +2053,21 @@ const server = http.createServer(async (req, res) => {
 
 server.on('error', (err) => {
   if (err.code === 'EADDRINUSE') {
-    console.error(`\n  ⚠️  端口 ${PORT} 已被占用——FanBox 很可能已经在运行了。`);
-    console.error(`      直接打开浏览器访问  http://localhost:${PORT}  就行；`);
-    console.error(`      想另开一个，换端口：FANBOX_PORT=8080 node server.js\n`);
+    console.error(`\n  ⚠️  Port ${PORT} is already in use — FanBox is probably already running.`);
+    console.error(`      Just open  http://localhost:${PORT}  in your browser;`);
+    console.error(`      to start another one, use a different port: FANBOX_PORT=8080 node server.js\n`);
   } else {
-    console.error('\n  启动失败：', err.message, '\n');
+    console.error('\n  Failed to start:', err.message, '\n');
   }
   process.exit(1);
 });
 
 server.listen(PORT, '127.0.0.1', () => {
   const link = `http://localhost:${PORT}`;
-  console.log('\n  📦  FanBox 已启动');
+  console.log('\n  📦  FanBox is up');
   console.log(`  🔗  ${link}`);
-  console.log('  🏠  根目录:', HOME);
-  console.log('\n  按 Ctrl+C 退出\n');
+  console.log('  🏠  Root:', HOME);
+  console.log('\n  Press Ctrl+C to quit\n');
   pruneThumbs().catch(() => {}); // 启动时裁剪缩略图缓存，防止无限增长
   if (!process.env.FANBOX_NO_OPEN) {
     const opener = PLATFORM === 'darwin' ? 'open' : PLATFORM === 'win32' ? 'start' : 'xdg-open';
