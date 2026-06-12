@@ -557,7 +557,7 @@ kbd {
 
 /* 项目记忆 */
 .sb-links { display: flex; gap: 14px; }
-.mem-dialog { width: 680px; max-width: 94vw; }
+.input-dialog.mem-dialog { width: 680px; max-width: 94vw; } /* 双类提特异性：否则被后面的 .input-dialog{width:420px} 压窄 */
 .mem-body { max-height: 68vh; overflow-y: auto; margin-top: 8px; }
 .mem-sess { padding: 9px 6px; border-bottom: 1px solid var(--border); }
 .mem-sess:last-child { border-bottom: none; }
@@ -574,6 +574,21 @@ kbd {
 .mem-files { margin: 6px 0 0 28px; }
 .mem-file { font-family: var(--font-mono); font-size: 11px; color: var(--text-dim); padding: 2px 6px; border-radius: 4px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .mem-file:hover { background: var(--bg-3); color: var(--text); }
+
+/* 全局项目记忆：标题栏入口按钮 + 双栏面板 */
+.navtitle-act { margin-left: auto; display: inline-flex; align-items: center; justify-content: center; padding: 2px; border: none; background: none; color: var(--text-faint); cursor: pointer; border-radius: 5px; }
+.navtitle-act:hover { color: var(--accent); background: var(--accent-soft); }
+/* 双类提高特异性：基础 .input-dialog{width:420px} 在表里排在后面，单类会被它覆盖 */
+.input-dialog.allmem-dialog { width: 900px; max-width: 96vw; }
+.allmem-body { display: flex; gap: 12px; margin-top: 8px; height: 68vh; }
+.allmem-projs { flex: 0 0 36%; min-width: 150px; max-width: 240px; overflow-y: auto; border-right: 1px solid var(--border); padding-right: 6px; }
+.allmem-proj { padding: 7px 9px; border-radius: 7px; cursor: pointer; display: flex; flex-direction: column; gap: 3px; }
+.allmem-proj:hover { background: var(--bg-3); }
+.allmem-proj.on { background: var(--accent-soft); }
+.allmem-proj-name { font-size: 12.5px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.allmem-proj.on .allmem-proj-name { color: var(--accent); }
+.allmem-proj-meta { font-size: 10.5px; color: var(--text-faint); display: flex; align-items: center; gap: 4px; }
+.allmem-sessions { flex: 1; min-width: 0; overflow-y: auto; max-height: none; margin-top: 0; }
 
 /* 磁盘占用透视 */
 .disk-dialog { width: 540px; max-width: 92vw; }

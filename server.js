@@ -1571,7 +1571,7 @@ async function agentProjects() {
   const sorted = [...map.entries()].sort((a, b) => b[1].lastActive - a[1].lastActive);
   const projects = [];
   for (const [cwd, info] of sorted) {
-    if (projects.length >= 12) break;
+    if (projects.length >= 50) break; // 侧栏只取前 8，全局记忆浏览器要看全部——上限放到 50 兜底
     try { if (!(await fsp.stat(cwd)).isDirectory()) continue; } catch { continue; }
     projects.push({ path: cwd, name: path.basename(cwd), agents: [...info.agents], lastActive: info.lastActive });
   }
