@@ -144,7 +144,8 @@ const CODE_BADGES = {
 };
 const ARCHIVE_EXT = new Set(['zip', 'rar', '7z', 'gz', 'tar', 'tgz', 'bz2', 'xz']);
 // 终端裸文件名识别的扩展名白名单：没有它 e.g/node.js/v1.2 这类词全是误报下划线
-const TERM_LINK_RE_BARE = /(?<=^|[\s'"`(\[（【>：:=])[\p{L}\p{N}_@][\p{L}\p{N}_.\-@/]*\.(?:md|markdown|txt|pdf|png|jpe?g|gif|webp|svg|avif|heic|icns|ico|mp4|mov|webm|mkv|mp3|wav|m4a|flac|json|jsonl|js|mjs|cjs|ts|tsx|jsx|css|scss|sass|less|html?|xml|ya?ml|toml|ini|conf|lock|log|sh|zsh|bash|py|rb|go|rs|java|kt|swift|c|h|cpp|hpp|cs|php|sql|csv|tsv|xlsx?|docx?|pptx?|key|numbers|pages|zip|tar|gz|tgz|dmg|app|plist|epub|srt|vtt|command)(?=$|[.\s'"`)\],:;。，）】])/gu;
+// 首尾边界都含全角胶水标点：「生成了 a.png、b.png」顿号列举的两个名字才都识别得到
+const TERM_LINK_RE_BARE = /(?<=^|[\s'"`(\[（【>：:=；，。、？！])[\p{L}\p{N}_@][\p{L}\p{N}_.\-@/]*\.(?:md|markdown|txt|pdf|png|jpe?g|gif|webp|svg|avif|heic|icns|ico|mp4|mov|webm|mkv|mp3|wav|m4a|flac|json|jsonl|js|mjs|cjs|ts|tsx|jsx|css|scss|sass|less|html?|xml|ya?ml|toml|ini|conf|lock|log|sh|zsh|bash|py|rb|go|rs|java|kt|swift|c|h|cpp|hpp|cs|php|sql|csv|tsv|xlsx?|docx?|pptx?|key|numbers|pages|zip|tar|gz|tgz|dmg|app|plist|epub|srt|vtt|command)(?=$|[.\s'"`)\],:;。，）】、？！；：])/gu;
 // 文件夹：干净扁平的单色实心文件夹（强色 + 简洁几何，不做作）
 function gFolder(size, color) {
   return `<svg class="rich-glyph" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none">`
@@ -267,9 +268,10 @@ async function navigate(p, pushHistory = true) {
     state.cursor = -1;
     render();
     renderRootsActive();
-    // 联动：监听此目录 + 各终端项目目录的文件变化（agent 改文件→自动刷新）；终端跟随则 cd 过去
+    // 联动：监听此目录 + 各终端项目目录的文件变化（agent 改文件→自动刷新）
     updateWatches();
-    if (typeof term !== 'undefined' && term.followBrowse && term.active) term.syncCd(state.cwd);
+    // 手动跳目录 = 接管浏览，文件跟随让位（跟随自己发起的导航除外）
+    if (follow.on && !follow.navving) setFileFollow(false, '手动接管，文件跟随已停');
   } catch (e) { toast('打开失败', true); }
 }
 // 汇总当前要监听的目录：浏览目录 + 每个终端会话的项目目录，发给主进程做增量监听
@@ -491,6 +493,7 @@ function applySelection(path) {
   if (path) { const el = area.querySelector(`[data-path="${CSS.escape(path)}"]`); if (el) el.classList.add('selected'); }
 }
 function onItemClick(e) {
+  if (follow.on) setFileFollow(false, '手动接管，文件跟随已停'); // 目录分支由 navigate 内统一处理，这里管点文件
   if (e.isDir) { state.selected = e.path; navigate(e.path); return; }
   applySelection(e.path);
   openPreview(e);
@@ -515,6 +518,7 @@ function moveCursor(d) {
 function cursorEnter(editor) {
   const e = state.visible[state.cursor];
   if (!e) return;
+  if (follow.on) setFileFollow(false, '手动接管，文件跟随已停');
   if (editor && !e.isDir) { openWith(e.path, 'editor'); return; }
   if (e.isDir) { state.selected = e.path; navigate(e.path); }
   else { applySelection(e.path); openPreview(e); recordRecent(e.path); }
@@ -625,6 +629,7 @@ function renderHtmlPreview(data, meta) {
 }
 // 查看改动：HEAD 版本 vs 工作区当前内容，用 Monaco 只读 DiffEditor 并排渲染
 async function showDiff(e) {
+  if (follow.on) setFileFollow(false, '手动接管，文件跟随已停');
   const data = await api('/api/git-file?path=' + encodeURIComponent(e.path));
   if (!data.isRepo) { toast('该文件不在 git 仓库里', true); return; }
   if (!data.diffable) { toast('该类型不支持 diff', true); return; }
@@ -848,6 +853,7 @@ function toggleSidebar(force) {
 // ---------- 图片基础编辑（canvas：标注/打码/转格式/缩放/压缩，原生保存）----------
 let imgEditState = null;
 async function enterImageEdit(e) {
+  if (follow.on) setFileFollow(false, '手动接管，文件跟随已停'); // 编辑时绝不能被跟随抢屏
   if (!await guardDirty()) return;
   recordRecent(e.path);
   mona.disposeIfAny(); crepe.disposeIfAny();
@@ -1079,6 +1085,7 @@ async function refresh() {
 }
 // 文本原地编辑：md → Milkdown Crepe 所见即所得；其它 → Monaco；都失败回退 textarea
 async function enterEditMode(e) {
+  if (follow.on) setFileFollow(false, '手动接管，文件跟随已停'); // 编辑时绝不能被跟随抢屏
   if (!await guardDirty()) return;
   mona.disposeIfAny();
   crepe.disposeIfAny();
@@ -1693,6 +1700,7 @@ async function loadAgentProjects() {
 // 结果写进统一数据源 state.entries，交给 renderFiles 渲染——这样筛选 / 排序 / 隐藏开关
 // 都能直接作用在最近列表上，不会把视图无声切回上一个目录
 async function showRecent() {
+  if (follow.on) setFileFollow(false, '手动接管，文件跟随已停');
   state.recentMode = true;
   state.cursor = -1;
   $('#file-area').innerHTML = '<div class="cmdk-loading">扫描最近修改的文件…</div>';
@@ -1940,9 +1948,8 @@ function bindEvents() {
   muteBtn.onclick = () => { state.muted = !state.muted; localStorage.setItem('fb_muted', state.muted ? '1' : '0'); syncMute(); if (!state.muted) playChime('tick'); };
   $('#term-close').onclick = () => term.close();
   $('#btn-sidebar').onclick = () => toggleSidebar();
-  $('#term-follow').onclick = () => term.setFollow(!term.followBrowse);
+  $('#file-follow').onclick = () => setFileFollow(!follow.on);
   $('#term-locate').onclick = () => term.locateCwd();
-  if (term.followBrowse) $('#term-follow').classList.add('on');
   // 终端随窗口尺寸变化重排，避免 TUI 错位
   window.addEventListener('resize', () => term.fitActive());
   if (window.ResizeObserver) new ResizeObserver(() => term.fitActive()).observe($('#xterm-host'));
@@ -2086,7 +2093,6 @@ const TERM_ASK_RE = /(Do you want to (proceed|continue|make this edit|allow|use 
 const term = {
   sessions: [], seq: 0, active: null, maximized: false,
   dock: localStorage.getItem('fb_term_dock') || 'bottom',
-  followBrowse: localStorage.getItem('fb_term_follow') === '1',
   available() { return !!(window.fanboxPty && window.Terminal && !window.__noXterm); },
   // 每套皮肤一整套手调 ANSI 主题——暗皮肤暗终端、亮皮肤亮终端，不再出现「暖纸里嵌黑块」
   themes: {
@@ -2267,7 +2273,7 @@ const term = {
     if (!s || !name) return '';
     const buf = s.xterm.buffer.active;
     const esc = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const re = new RegExp('(?:~|/)(?:[^\\s\'"`()]*/)?' + esc + '(?=$|[\\s\'"`)\\],:;。，）】])', 'gu');
+    const re = new RegExp('(?:~|/)(?:[^\\s\'"`()]*/)?' + esc + '(?=$|[\\s\'"`)\\],:;。，）】、？！；：])', 'gu');
     const hits = [];
     let row = Math.min(fromRow == null ? buf.length - 1 : fromRow, buf.length - 1);
     let budget = 2000;
@@ -2291,17 +2297,6 @@ const term = {
       row = start - 1;
     }
     return hits.join('\n');
-  },
-  // 终端跟随浏览：把活动终端 cd 到指定目录
-  syncCd(dir) {
-    if (!this.active || !dir) return;
-    this.input(this.active, 'cd ' + shQuote(dir) + '\r');
-  },
-  setFollow(on) {
-    this.followBrowse = on;
-    localStorage.setItem('fb_term_follow', on ? '1' : '0');
-    $('#term-follow').classList.toggle('on', on);
-    if (on && this.active && state.cwd) this.syncCd(state.cwd);
   },
   // 定位文件区到活动终端的真实目录
   async locateCwd() {
@@ -2431,7 +2426,8 @@ const term = {
           };
           let m;
           // 0. URL：直接系统浏览器打开（Electron 的 windowOpenHandler 会转 shell.openExternal）
-          const reU = /\bhttps?:\/\/[^\s'"`<>）（【】「」]+/g;
+          // 全角标点不可能裸出现在合法 URL 里（必须百分号编码），排除掉防止「url、后续散文」粘连
+          const reU = /\bhttps?:\/\/[^\s'"`<>）（【】「」，。、？！：；]+/g;
           while ((m = reU.exec(t)) !== null) {
             const url = m[0].replace(/[)\],.:;。，？！?!）】>]+$/, '');
             push(m.index, m.index + url.length, url, '', () => window.open(url));
@@ -2444,8 +2440,10 @@ const term = {
             push(m.index + 1, m.index + 1 + inner.length, inner, '');
           }
           // 2. 含斜杠的 token：宽进严出——整个 token 都收（.claude/x、写作/01-xx、/abs、~/x 全覆盖），
-          // 配不配下划线交给服务端 stat 验证（散文里的「分发/产品演示——……」会被验证刷掉）
-          const reP = /[^\s'"`:()（）「」【】<>]*\/[^\s'"`:()（）「」【】<>]*/g;
+          // 配不配下划线交给服务端 stat 验证（散文里的「分发/产品演示——……」会被验证刷掉）。
+          // 全角胶水标点（：、，。等）必须进切断集：它们出现在路径「前面」时（看看效果：/tmp/x.png、
+          // 顿号列举的第二项），后置 split 救不回来——要么整段散文粘进候选 stat 必败，要么首段为空整条丢弃
+          const reP = /[^\s'"`:()（）「」【】<>：；，。、？！]*\/[^\s'"`:()（）「」【】<>：；，。、？！]*/g;
           const r2 = [];
           while ((m = reP.exec(t)) !== null) {
             // 全角标点几乎不出现在路径里，却常把路径和后续散文粘成一个 token：切到第一个为止
@@ -2587,21 +2585,44 @@ const term = {
         if (ask || dur > 1500) this.awaitGlow();
         if (ask) {
           playChime('ask'); // 非 done → 单音，和「完成」的双音区分开
-          if (!document.hasFocus() || s.id !== this.active) this.notify(s, '等待你确认', (s.title || 'shell') + ' 在等你拍板');
+          if (!document.hasFocus() || s.id !== this.active) this.notify(s, '等待你确认 · ' + (s.title || 'shell'), this.lastReplyExcerpt(s) || (s.title || 'shell') + ' 在等你拍板');
         } else if (dur > 4000) { // 跑了一会儿的真任务完成：文件区涟漪 + 极轻提示音 + 必要时系统通知
           rippleFileArea();
           playChime('done');
-          if (!document.hasFocus() || s.id !== this.active) this.notify(s, 'agent 任务完成', (s.title || 'shell') + ' 已空闲');
+          if (!document.hasFocus() || s.id !== this.active) this.notify(s, 'agent 任务完成 · ' + (s.title || 'shell'), this.lastReplyExcerpt(s) || (s.title || 'shell') + ' 已空闲');
         }
       });
       if (!anyBusy) { clearInterval(this._statusTimer); this._statusTimer = null; }
     }, 600);
   },
+  // 收工时从缓冲区捞 agent 最后说的话，做通知预览：剥掉 TUI 框线/输入框/页脚状态行，留正文
+  lastReplyExcerpt(s, maxLen = 160) {
+    const JUNK = /esc to interrupt|\? for shortcuts|for commands|bypass|auto-accept|accept edits|plan mode|shift\+tab|context left|tokens used|still running|·\s*\d+\s+(shells?|monitors?|tasks?|agents?)\b/i;
+    const lines = [];
+    for (const raw of this.tailText(s, 40).split('\n')) {
+      const t = raw.replace(/^[\s│┃]+|[\s│┃]+$/g, '').replace(/^[⏺●◉>]\s+/, '').trim();
+      if (!t) continue;
+      if (/^[╭╰╮╯├┤─━┄┆┈·•．.…*=_-]+$/.test(t)) continue; // 纯框线/分隔线
+      if (JUNK.test(t)) continue;
+      lines.push(t);
+    }
+    const text = lines.slice(-3).join(' ').replace(/\s+/g, ' ').trim();
+    return text.length > maxLen ? text.slice(0, maxLen) + '…' : text;
+  },
   notify(s, title, body) {
     try {
       if (typeof Notification === 'undefined') return;
-      if (Notification.permission === 'granted') { new Notification(title, { body }); }
-      else if (Notification.permission !== 'denied') { Notification.requestPermission().then((p) => { if (p === 'granted') new Notification(title, { body }); }); }
+      const fire = () => {
+        const n = new Notification(title, { body });
+        // 点通知：app 拉回前台 + 切到对应终端标签——多项目并行时直达要操作的那个环境
+        n.onclick = () => {
+          try { if (window.fanboxWin) window.fanboxWin.focus(); else window.focus(); } catch { /* */ }
+          if (s && this.sessions.includes(s)) { this.open(); this.activate(s.id); }
+          try { n.close(); } catch { /* */ }
+        };
+      };
+      if (Notification.permission === 'granted') fire();
+      else if (Notification.permission !== 'denied') Notification.requestPermission().then((p) => { if (p === 'granted') fire(); });
     } catch { /* 通知不可用就算了 */ }
   },
   renderTabs() {
@@ -3144,6 +3165,204 @@ function kindFromName(p) {
   return 'text';
 }
 
+// ---------- 文件跟随（agent 改哪个文件，文件区 + 预览就跟到哪）----------
+// 代码文件实时滚动到刚写入的行并高亮；html 边写边出实时网页（双缓冲换页不白闪）；
+// md 边写边渲染。任何手动浏览/编辑 = 接管，跟随立即自动停，想跟再点按钮。
+const follow = {
+  on: false,
+  path: null,        // 正在跟随的文件（绝对路径）
+  lastContent: null, // 上次渲染的文本内容，用于定位本次改动行
+  pendingPath: null, // 节流窗口内最新的待切换目标
+  navving: false,    // 跟随自己发起的 navigate，不触发「手动接管即停」
+  swapping: false,   // html 双缓冲换页进行中
+  swapDirty: false,  // 换页期间又来了新写入，换完补刷一次
+  timers: {},
+};
+const isHtmlName = (n) => /\.(html?|xhtml)$/i.test(String(n || ''));
+function setFileFollow(on, offMsg) {
+  if (follow.on === on) return;
+  follow.on = on;
+  $('#file-follow')?.classList.toggle('on', on);
+  clearTimeout(follow.timers.sw); clearTimeout(follow.timers.rd);
+  follow.timers = {};
+  follow.path = null; follow.pendingPath = null; follow.lastContent = null;
+  follow.swapping = false; follow.swapDirty = false;
+  if (!on) $('#preview-title')?.querySelector('.live-badge')?.remove(); // 留住最后画面，只摘掉「跟随中」
+  toast(on ? '文件跟随已开：agent 改哪个文件就看哪个' : (offMsg || '文件跟随已停'));
+  // 一开就有得看：5 分钟内有过变更就直接跟上最后那个文件，不用干等 agent 下一笔
+  if (on && state.changeLog[0] && Date.now() - state.changeLog[0].ts < 300000) followSwitch(state.changeLog[0].path);
+}
+// 变更事件入口（已过噪声/自打开过滤）：同一文件继续写 → 只刷视图；换了文件 → 节流切目标
+function followChange(dir, sub) {
+  if (!follow.on) return;
+  const full = dir.replace(/\/$/, '') + '/' + sub;
+  if (full === follow.path) { scheduleFollowRender(); return; }
+  if (dirtyCheck || autosaveFlush || imgEditState) return; // 编辑器开着就不抢屏，等用户收工
+  follow.pendingPath = full;
+  // 节流而非防抖：agent 在多个文件间快速轮写时，定时器只设一次，到点取最新目标，
+  // 防抖会被连续事件无限顺延、永远切不过去
+  if (!follow.timers.sw) {
+    const wait = follow.path ? 900 : 120; // 还没跟上任何文件时秒切，已在跟随时稳住节奏
+    follow.timers.sw = setTimeout(() => { follow.timers.sw = null; followSwitch(follow.pendingPath); }, wait);
+  }
+}
+async function followSwitch(full) {
+  if (!follow.on || !full) return;
+  if (dirtyCheck || autosaveFlush || imgEditState) return;
+  follow.switching = true; // 切换期间压住 scheduleFollowRender，末尾的整体渲染会兜住
+  follow.path = full; follow.lastContent = null; follow.pendingPath = null;
+  follow.swapping = false; follow.swapDirty = false;
+  try {
+    const dir = dirOf(full);
+    if (dir !== state.cwd || state.recentMode) {
+      follow.navving = true;
+      try { await navigate(dir, false); } finally { follow.navving = false; }
+      if (!follow.on || state.cwd !== dir) { follow.path = null; return; } // 目录打不开/期间被停掉
+    }
+    let e = state.entries.find((x) => x.path === full);
+    if (!e) { await refresh(); e = state.entries.find((x) => x.path === full); } // 新文件刚出现，列表还没刷出来
+    if (e && e.isDir) { follow.path = null; return; } // mkdir 之类的目录变更不跟
+    if (!e) e = { path: full, name: baseOf(full), kind: kindFromName(full), isDir: false };
+    applySelection(full);
+    await followRender(e, true);
+  } finally { follow.switching = false; }
+}
+function scheduleFollowRender() {
+  if (follow.timers.rd) return;
+  follow.timers.rd = setTimeout(() => {
+    follow.timers.rd = null;
+    if (!follow.on || !follow.path || follow.switching) return;
+    const e = state.entries.find((x) => x.path === follow.path)
+      || { path: follow.path, name: baseOf(follow.path), kind: kindFromName(follow.path), isDir: false };
+    followRender(e, false);
+  }, 300);
+}
+async function followRender(e, first) {
+  if (!follow.on || follow.path !== e.path) return;
+  const kind = e.kind || kindFromName(e.path);
+  if (kind === 'text') {
+    if (first) followChrome(e);
+    if (isHtmlName(e.name)) return liveHtml(e, first);
+    if (isMdName(e.name) && window.marked && !window.__noMarked) return liveMd(e, first);
+    return liveCode(e, first);
+  }
+  // 图片/视频/PDF 等：走常规预览，塞新鲜 mtime 破缓存，每次写入整个换新
+  await openPreview({ ...e, mtime: Date.now() });
+  if (follow.on && follow.path === e.path) followBadge(e);
+}
+// 跟随视图的外框：面板 + 标题徽标 + 动作条（不复用 openPreview，避免 md 被它转进编辑器）
+function followChrome(e) {
+  mona.disposeIfAny(); crepe.disposeIfAny(); imgEditState = null;
+  showPreviewPanel();
+  followBadge(e);
+  renderPreviewActions(e);
+  renderPreviewFoot(e);
+  $('#preview-body').innerHTML = '<div class="cmdk-loading">加载中…</div>';
+}
+function followBadge(e) {
+  $('#preview-title').innerHTML = `<span class="live-badge"><i></i>跟随中</span>${escapeHtml(e.name)}`;
+}
+// 找出新内容相对旧内容的变动行区间（首尾共同前后缀夹逼，够准且 O(n)）
+function changedRange(oldStr, newStr) {
+  const a = oldStr.split('\n'), b = newStr.split('\n');
+  const min = Math.min(a.length, b.length);
+  let s = 0;
+  while (s < min && a[s] === b[s]) s++;
+  let e1 = a.length - 1, e2 = b.length - 1;
+  while (e1 >= s && e2 >= s && a[e1] === b[e2]) { e1--; e2--; }
+  if (e2 < s) return { start: Math.min(s, b.length - 1), end: Math.min(s, b.length - 1) }; // 纯删除：指向删除位置
+  return { start: s, end: e2 };
+}
+// 把 hljs 输出按行切开：跨行的 span 行尾闭合、下一行重开，每行都是闭合 HTML
+function splitHighlighted(html) {
+  const out = []; const open = []; let cur = ''; let last = 0; let m;
+  const re = /<span[^>]*>|<\/span>|\n/g;
+  while ((m = re.exec(html)) !== null) {
+    cur += html.slice(last, m.index); last = re.lastIndex;
+    if (m[0] === '\n') { out.push(cur + '</span>'.repeat(open.length)); cur = open.join(''); }
+    else if (m[0] === '</span>') { if (open.length) { open.pop(); cur += '</span>'; } }
+    else { open.push(m[0]); cur += m[0]; }
+  }
+  out.push(cur + html.slice(last));
+  return out;
+}
+function highlightLines(content, ext) {
+  if (window.hljs && !window.__noHljs && ext && window.hljs.getLanguage(ext)) {
+    try { return splitHighlighted(window.hljs.highlight(content, { language: ext, ignoreIllegals: true }).value); }
+    catch { /* 高亮失败退纯文本 */ }
+  }
+  return content.split('\n').map(escapeHtml);
+}
+// 代码实时流：每次写入重读全文，逐行渲染，本次改动的行闪一下并平滑滚过去
+async function liveCode(e, first) {
+  const data = await api('/api/read?path=' + encodeURIComponent(e.path));
+  if (!follow.on || follow.path !== e.path) return; // 拉取期间已切走/停掉
+  const body = $('#preview-body');
+  if (data.error || data.tooLarge) {
+    body.innerHTML = `<div class="empty-state">${escapeHtml(data.tooLarge ? '文件太大，跟随暂不渲染内容' : (data.error || '读取失败'))}</div>`;
+    follow.lastContent = null;
+    return;
+  }
+  const content = data.content || '';
+  if (!first && content === follow.lastContent) return;
+  const range = follow.lastContent == null ? null : changedRange(follow.lastContent, content);
+  const lines = highlightLines(content, (data.ext || '').toLowerCase());
+  let host = body.querySelector('.follow-code');
+  if (!host) { body.innerHTML = '<pre class="follow-code"></pre>'; host = body.querySelector('.follow-code'); }
+  host.innerHTML = lines.map((ln, i) =>
+    `<div class="cl${range && i >= range.start && i <= range.end ? ' cl-new' : ''}">${ln}</div>`).join('');
+  follow.lastContent = content;
+  // 首次（不知道改了哪）滚到底——正被写的文件大概率在长尾巴；之后跟着改动行走
+  const target = range ? host.children[Math.min(range.end, host.children.length - 1)] : host.lastElementChild;
+  if (target) target.scrollIntoView({ block: 'center', behavior: first ? 'auto' : 'smooth' });
+}
+// md 实时渲染：变更在尾部就贴底滚动（agent 通常从上往下写），改中间则保持视口不跳
+async function liveMd(e, first) {
+  const data = await api('/api/read?path=' + encodeURIComponent(e.path));
+  if (!follow.on || follow.path !== e.path) return;
+  const body = $('#preview-body');
+  if (data.error || data.tooLarge) return liveCode(e, first); // 复用其错误/超限展示
+  const content = data.content || '';
+  if (!first && content === follow.lastContent) return;
+  const range = follow.lastContent == null ? null : changedRange(follow.lastContent, content);
+  const nearEnd = !range || range.end >= content.split('\n').length - 4;
+  const keep = body.scrollTop;
+  body.innerHTML = `<div class="md-body">${window.marked.parse(content)}</div>`;
+  if (window.hljs && !window.__noHljs) body.querySelectorAll('pre code').forEach((b) => { try { window.hljs.highlightElement(b); } catch { /* */ } });
+  follow.lastContent = content;
+  if (nearEnd) body.scrollTo({ top: body.scrollHeight, behavior: first ? 'auto' : 'smooth' });
+  else body.scrollTop = keep;
+}
+// html 实时网页：新 iframe 隐身加载、onload 后换掉旧的（双缓冲），白屏闪烁为零；
+// 半截 html 浏览器本来就能渐进渲染，正好呈现「网页长出来」的过程
+function liveHtml(e, first) {
+  const body = $('#preview-body');
+  let wrap = body.querySelector('.follow-html');
+  if (first || !wrap) {
+    body.innerHTML = `<div class="follow-html"><iframe class="iframe-preview" sandbox="allow-scripts" src="${fsUrl(e.path, Date.now())}"></iframe></div>`;
+    return;
+  }
+  if (follow.swapping) { follow.swapDirty = true; return; } // 正在换页，攒一次换完补刷
+  follow.swapping = true;
+  const next = document.createElement('iframe');
+  next.className = 'iframe-preview follow-next';
+  next.setAttribute('sandbox', 'allow-scripts'); // 与常规 html 预览同口径：不给 same-origin，防 RCE
+  let swapped = false;
+  const swap = () => {
+    if (swapped) return;
+    swapped = true;
+    follow.swapping = false;
+    if (!next.isConnected) return;
+    wrap.querySelectorAll('iframe').forEach((f) => { if (f !== next) f.remove(); });
+    next.classList.remove('follow-next');
+    if (follow.swapDirty) { follow.swapDirty = false; scheduleFollowRender(); }
+  };
+  next.onload = swap;
+  setTimeout(swap, 2500); // onload 不来（死循环脚本等）也强制换，跟随不卡死
+  next.src = fsUrl(e.path, Date.now());
+  wrap.appendChild(next);
+}
+
 // WOW4 环境感知：完成时文件区荡开一圈大涟漪 + 极轻提示音（Web Audio 当场合成，无需音频文件）
 function rippleFileArea() {
   const host = $('#content') || $('#file-area');
@@ -3235,6 +3454,8 @@ if (window.fanboxFs) {
     }
     // 记进会话级收件箱（跨所有监听目录，不止当前目录），供「变更」面板回看
     if (filename) recordChange(dir, String(filename));
+    // 文件跟随：必须在「不是当前目录就 return」之前喂，跨目录改动才跟得上
+    if (filename) followChange(dir, String(filename));
     if (dir !== state.cwd || state.recentMode) return;
     // 高亮被 agent 改动的项：递归监听下 src/foo.js 归到顶层 src，并累计计数 + 记子路径供 tooltip 定位
     if (filename) {
@@ -3250,6 +3471,7 @@ if (window.fanboxFs) {
     clearTimeout(rt);
     rt = setTimeout(async () => {
       await refresh();
+      if (follow.on && follow.path && state.selected === follow.path) return; // 跟随有自己的实时渲染，别用 openPreview 顶掉（md 会被转进编辑器）
       if (state.selected && !$('#preview').classList.contains('hidden') && !$('#ed-host') && !imgEditState) {
         const e = state.entries.find((x) => x.path === state.selected);
         if (e && (e.kind === 'text' || e.kind === 'image')) openPreview(e);

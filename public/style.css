@@ -857,8 +857,8 @@ kbd {
 .desktop #topbar button, .desktop #topbar .breadcrumb, .desktop #topbar .seg, .desktop #topbar .toggle, .desktop #topbar input { -webkit-app-region: no-drag; }
 
 /* 终端头：跟随/定位 文字按钮 */
-.term-actions #term-follow, .term-actions #term-locate { font-size: 11px; padding: 3px 8px; font-family: var(--font-ui); }
-.term-actions #term-follow.on { color: var(--accent); background: var(--accent-soft); }
+.term-actions #file-follow, .term-actions #term-locate { font-size: 11px; padding: 3px 8px; font-family: var(--font-ui); }
+.term-actions #file-follow.on { color: var(--accent); background: var(--accent-soft); }
 .term-actions #term-max.on { color: var(--accent-ink); background: var(--accent); }
 .nav-buttons #btn-sidebar.on { color: var(--accent); border-color: var(--accent); }
 
@@ -875,8 +875,22 @@ kbd {
 .desktop #sidebar { background-color: color-mix(in srgb, var(--panel) 80%, transparent); }
 
 /* 跟随/定位 改为图标+文字，覆盖前面的纯文字规则 */
-.term-actions #term-follow, .term-actions #term-locate { display: inline-flex; align-items: center; gap: 4px; }
-.term-actions #term-follow svg, .term-actions #term-locate svg { flex-shrink: 0; }
+.term-actions #file-follow, .term-actions #term-locate { display: inline-flex; align-items: center; gap: 4px; }
+.term-actions #file-follow svg, .term-actions #term-locate svg { flex-shrink: 0; }
+
+/* ---------- 文件跟随：实时徽标 + 代码流动 + html 双缓冲 ---------- */
+.live-badge { display: inline-flex; align-items: center; gap: 5px; margin-right: 8px; padding: 1px 7px; border-radius: 99px; font-size: 10px; font-weight: 700; letter-spacing: 0.5px; color: var(--accent); background: var(--accent-soft); flex-shrink: 0; }
+.live-badge i { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); animation: livePulse 1.1s ease-in-out infinite; }
+@keyframes livePulse { 50% { opacity: 0.2; transform: scale(0.7); } }
+/* 逐行渲染的代码流（每行一个闭合 div，空行用零宽空格撑住行高） */
+.follow-code .cl { border-radius: 3px; }
+.follow-code .cl:empty::before { content: "\200B"; }
+.follow-code .cl-new { animation: clFlash 1.3s ease-out; }
+@keyframes clFlash { 0% { background: var(--accent-soft); box-shadow: -3px 0 0 var(--accent); } 100% { background: transparent; box-shadow: -3px 0 0 transparent; } }
+/* html 双缓冲：新旧 iframe 叠放，新页 onload 后才顶上来，换页零白闪 */
+.follow-html { position: relative; height: 100%; min-height: 400px; }
+.follow-html iframe { position: absolute; inset: 0; width: 100%; height: 100%; min-height: 0; }
+.follow-html iframe.follow-next { opacity: 0; }
 
 /* ---------- R2修：审美打磨 + 变更高亮 ---------- */
 /* 换肤过渡纳入 color，并与 body 统一 0.28s，消除文字瞬切 */

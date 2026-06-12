@@ -67,6 +67,7 @@ The UI was designed with [huashu-design](https://github.com/alchaincyf/huashu-de
 ### Watch what the agent changed
 
 - **A live dashboard** — every file the agent writes makes its card ripple and glow by change frequency; the light follows wherever the agent goes.
+- **Follow mode** — one click and the file view + preview track whatever file the agent edits: code scrolls with freshly written lines flashing, HTML renders as a live web page while it's being written (double-buffered, zero white flash), Markdown renders live. Any manual browsing hands control back to you instantly.
 - **Session replay** — drag the timeline like scrubbing a video to replay which files the agent touched, step by step.
 - **Change inbox** — all files modified this session, aggregated across projects, for parallel agent runs.
 - **Git diff** — Monaco read-only DiffEditor, HEAD vs working tree side by side.

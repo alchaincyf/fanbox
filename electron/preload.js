@@ -45,6 +45,10 @@ contextBridge.exposeInMainWorld('fanboxUpdate', {
   open: (url) => ipcRenderer.invoke('update:open', { url }),
 });
 
+contextBridge.exposeInMainWorld('fanboxWin', {
+  focus: () => ipcRenderer.invoke('win:focus'), // 点通知拉回前台
+});
+
 contextBridge.exposeInMainWorld('fanboxEnv', {
   isDesktopApp: true,
   platform: process.platform,
