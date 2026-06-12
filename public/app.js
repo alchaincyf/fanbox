@@ -827,6 +827,16 @@ function togglePreviewMax(force) {
   if (b) { b.classList.toggle('on', on); b.title = on ? '还原预览' : '预览铺满'; }
   if (!on) { applyPreviewSize(); term.fitActive(); }
 }
+// ⌘⇧F：焦点跟随的铺满开关——已有铺满先还原（铺满时另一侧被藏，焦点不可能在那）；
+// 否则焦点在终端就铺终端，预览开着就铺预览，最后兜底铺终端
+function toggleFocusedMax() {
+  if (term.maximized) { term.toggleMax(false); return; }
+  if ($('#main-body').classList.contains('pv-max')) { togglePreviewMax(false); return; }
+  const termOpen = !$('#terminal-panel').classList.contains('hidden');
+  if (termOpen && $('#terminal-panel').contains(document.activeElement)) { term.toggleMax(true); return; }
+  if (!$('#preview').classList.contains('hidden')) { togglePreviewMax(true); return; }
+  if (termOpen) term.toggleMax(true);
+}
 function toggleSidebar(force) {
   state.sidebarCollapsed = force === undefined ? !state.sidebarCollapsed : force;
   localStorage.setItem('fb_sidebar_collapsed', state.sidebarCollapsed ? '1' : '0');
@@ -2025,6 +2035,8 @@ function bindEvents() {
     if (e.key === 'Escape' && !$('#preview').classList.contains('hidden')) { closePreview(); return; }
     if ((e.metaKey || e.ctrlKey) && e.key === '[') { e.preventDefault(); goBack(); return; }
     if ((e.metaKey || e.ctrlKey) && (e.key === 'b' || e.key === 'B') && !inInput) { e.preventDefault(); toggleSidebar(); return; }
+    // ⌘⇧F 铺满要在 inInput 拦截之前：终端焦点落在 xterm 的 textarea 上，正是主要使用场景
+    if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'f' || e.key === 'F')) { e.preventDefault(); toggleFocusedMax(); return; }
     if (inInput) return;
     // 主区键盘导航
     if (e.key === 'ArrowDown') { e.preventDefault(); moveCursor(state.cols); }
