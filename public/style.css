@@ -333,6 +333,9 @@ kbd {
 .preview-title { flex: 0 1 auto; min-width: 36px; font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #preview-close { background: none; border: none; color: var(--text-dim); font-size: 16px; cursor: pointer; flex: 0 0 auto; margin-left: 2px; }
 #preview-close:hover { color: var(--text); }
+#pv-max { background: none; border: none; color: var(--text-dim); cursor: pointer; flex: 0 0 auto; display: inline-flex; align-items: center; padding: 3px; border-radius: 5px; }
+#pv-max:hover { color: var(--text); }
+#pv-max.on { color: var(--accent-ink); background: var(--accent); }
 .preview-actions { display: flex; flex-wrap: nowrap; gap: 5px; padding: 0; margin-left: auto; overflow: visible; scrollbar-width: none; }
 
 /* 无文字图标按钮的即时气泡标签（替代慢吞吞、样式丑的原生 title）。统一向下弹出，避免贴顶被裁 */
@@ -761,6 +764,10 @@ kbd {
 /* 终端最大化（高优先级）：文件管理让位，终端铺满中区；分割条保留，可以直接拖回 */
 #main-body.term-max > #filemgmt { display: none; }
 #main-body.term-max > #terminal-panel { flex: 1 1 auto !important; width: 100% !important; height: 100% !important; }
+/* 预览最大化：文件区 + 终端让位，预览铺满中区（与 term-max 互斥，JS 保证） */
+#main-body.pv-max #content, #main-body.pv-max #preview-resizer { display: none; }
+#main-body.pv-max > #terminal-panel, #main-body.pv-max > #terminal-resizer { display: none; }
+#main-body.pv-max #preview { flex: 1 1 auto !important; }
 #content { min-height: 0; min-width: 0; }
 
 #terminal-resizer { flex: 0 0 6px; background: transparent; z-index: 5; position: relative; }

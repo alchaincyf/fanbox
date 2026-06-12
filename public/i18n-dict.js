@@ -274,6 +274,8 @@ window.FANBOX_DICT = {
   '新终端': 'New terminal',
   '终端铺满': 'Maximize terminal',
   '还原终端': 'Restore terminal',
+  '预览铺满': 'Maximize preview',
+  '还原预览': 'Restore preview',
   '切换 上下 / 左右 布局': 'Toggle bottom / right layout',
   '提示音开关': 'Toggle chime',
   '收起终端': 'Hide terminal',

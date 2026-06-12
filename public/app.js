@@ -688,6 +688,7 @@ async function closePreview() {
   if (!await guardDirty()) return;
   mona.disposeIfAny(); crepe.disposeIfAny(); imgEditState = null;
   animateLayout();
+  togglePreviewMax(false); // 铺满状态下关预览，pv-max 不清会把文件区和终端一起藏没
   $('#preview').classList.add('hidden');
   $('#preview-resizer').classList.add('hidden');
   applySelection(null);
@@ -815,6 +816,17 @@ function showPreviewPanel() {
   applyPreviewSize();
 }
 function applyPreviewWidth() { applyPreviewSize(); } // 兼容旧调用名
+// 预览最大化：铺满整个中区（文件区 + 终端让位），再点还原；与终端铺满互斥
+function togglePreviewMax(force) {
+  const mb = $('#main-body');
+  const on = force === undefined ? !mb.classList.contains('pv-max') : force;
+  if (on && term.maximized) term.toggleMax(false);
+  animateLayout();
+  mb.classList.toggle('pv-max', on);
+  const b = $('#pv-max');
+  if (b) { b.classList.toggle('on', on); b.title = on ? '还原预览' : '预览铺满'; }
+  if (!on) { applyPreviewSize(); term.fitActive(); }
+}
 function toggleSidebar(force) {
   state.sidebarCollapsed = force === undefined ? !state.sidebarCollapsed : force;
   localStorage.setItem('fb_sidebar_collapsed', state.sidebarCollapsed ? '1' : '0');
@@ -1895,6 +1907,7 @@ function bindEvents() {
   $('#btn-back').onclick = goBack;
   $('#btn-up').onclick = goUp;
   $('#preview-close').onclick = closePreview;
+  $('#pv-max').onclick = () => togglePreviewMax();
   $('#cmdk-trigger').onclick = () => cmdk.open();
   $('#btn-recent').onclick = showRecent;
   $('#btn-changes').onclick = () => toggleChangesPanel();
@@ -2122,6 +2135,7 @@ const term = {
   toggleMax(force) {
     animateLayout();
     this.maximized = force === undefined ? !this.maximized : force;
+    if (this.maximized) togglePreviewMax(false); // 两个铺满互斥
     $('#main-body').classList.toggle('term-max', this.maximized);
     const b = $('#term-max');
     if (b) { b.classList.toggle('on', this.maximized); b.title = this.maximized ? '还原终端' : '终端铺满'; }
