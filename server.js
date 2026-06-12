@@ -494,6 +494,20 @@ const DEFAULT_ORGANIZE_STRATEGY = `- 默认归档：过时/低频的文件移入
 - 文件夹一律不动，只整理松散文件
 - 拿不准的单独列出来问，宁可少动不要乱动`;
 
+// codex 各版本旗标常变（0.139 移除了 --full-auto）：按 --help 实测有什么用什么，
+// 全不认识就裸跑——退化成多几次审批确认，但不会因 unexpected argument 拉不起来
+async function codexOrganizeFlags(bin) {
+  const help = await new Promise((resolve) => {
+    execFile(bin, ['--help'], { timeout: 8000 }, (err, stdout) => resolve(err ? '' : String(stdout)));
+  });
+  if (help.includes('--full-auto')) return ' --full-auto';
+  let flags = '';
+  if (help.includes('--sandbox')) flags += ' --sandbox workspace-write';
+  if (help.includes('--ask-for-approval')) flags += ' -a on-request';
+  if (help.includes('--add-dir')) flags += ` --add-dir "${CONFIG_DIR}"`;
+  return flags;
+}
+
 async function findAgentBin(name) {
   // GUI 启动的 app 没有用户 shell 的 PATH，走登录 shell 找一次绝对路径
   return new Promise((resolve) => {
@@ -526,9 +540,11 @@ async function organizeLaunch(b) {
   const dir = resolvePath(b.path);
   const cfg = await readConfig();
   let engine = cfg.organizeEngine === 'codex' ? 'codex' : 'claude';
-  if (!(await findAgentBin(engine))) {
+  let bin = await findAgentBin(engine);
+  if (!bin) {
     const alt = engine === 'claude' ? 'codex' : 'claude';
-    if (await findAgentBin(alt)) engine = alt;
+    bin = await findAgentBin(alt);
+    if (bin) engine = alt;
     else return { ok: false, error: '没找到 claude / codex 命令——AI 整理需要装其中一个 CLI' };
   }
   const prefs = await fsp.readFile(ORGANIZE_PREFS_FILE, 'utf8').catch(() => '');
@@ -562,8 +578,10 @@ ${history || '（还没有历史记录）'}
   await fsp.mkdir(ORGANIZE_LOG_DIR, { recursive: true });
   await fsp.writeFile(ORGANIZE_BRIEF_FILE, brief, 'utf8');
   const kickoff = `先完整读 ${ORGANIZE_BRIEF_FILE}，然后按里面的约定，和我对话式整理当前文件夹`;
-  // claude 跳权限确认（动手前方案已过人）；codex 用 full-auto（工作区内可写、不逐条审批）
-  const cmd = engine === 'codex' ? `codex --full-auto "${kickoff}"` : `claude --dangerously-skip-permissions "${kickoff}"`;
+  // claude 跳权限确认（动手前方案已过人）；codex 旗标按当前版本实测拼出
+  const cmd = engine === 'codex'
+    ? `codex${await codexOrganizeFlags(bin)} "${kickoff}"`
+    : `claude --dangerously-skip-permissions "${kickoff}"`;
   return { ok: true, engine, cmd };
 }
 

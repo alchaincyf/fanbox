@@ -708,6 +708,12 @@ kbd {
 /* 保存主按钮：.primary 此前只在 preview-actions/editor-bar 下有样式，这里没兜住会露出原生白按钮 */
 .imgedit-export button.primary { border: 1px solid var(--accent); background: var(--accent); color: var(--accent-ink); font-weight: 600; padding: 5px 14px; border-radius: 7px; cursor: pointer; font-size: 12px; }
 .imgedit-export button.primary:hover { filter: brightness(1.06); }
+/* 编辑图片时面板撑满整窗——小预览栏里没法精细标注。靠 :has 感知编辑器 DOM：进入即全屏，任何退出路径（关闭/切文件/保存）替换掉 DOM 就自动还原，无需 JS 管理状态。z-index 必须低于弹窗层（.input-overlay 60），文字/另存为弹窗才能浮在上面 */
+#preview:has(.imgedit-tools) { position: fixed; inset: 0; z-index: 55; border: none; }
+#preview:has(.imgedit-tools) .preview-body { display: flex; flex-direction: column; }
+#preview:has(.imgedit-tools) .imgedit-canvas-wrap { flex: 1; min-height: 0; max-height: none; align-items: center; }
+#preview:has(.imgedit-tools) #ie-canvas { max-height: 100%; width: auto; height: auto; }
+#main-body:has(.imgedit-tools) #preview-resizer { display: none; }
 
 /* 通用输入弹窗 */
 .input-overlay {

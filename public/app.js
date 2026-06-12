@@ -1027,7 +1027,11 @@ async function ieSave(st, asNew) {
 }
 
 // ---------- 操作 ----------
+// macOS 打开文件时 LaunchServices 会写 com.apple.lastuseddate#PS 扩展属性，FSEvents 据此连发事件——
+// 内容没动却会点亮「改」徽标。自己发起的打开记下路径，3 秒内该文件的变更事件按噪声丢弃
+const selfOpened = new Map(); // 绝对路径 -> 时间戳
 async function openWith(p, withApp) {
+  selfOpened.set(p, Date.now());
   const r = await apiPost('/api/open', { path: p, with: withApp });
   if (r.ok) {
     const used = r.with;
@@ -3220,6 +3224,15 @@ if (window.fanboxFs) {
     // 系统/构建噪声（~/Library 缓存、node_modules 等 macOS 后台不停写）直接丢弃：
     // 既不点亮卡片、不进收件箱，也不触发列表刷新——否则 Library 会永远显示「被修改」
     if (filename && isNoisyChange(filename)) return;
+    // 自己刚打开的文件：macOS 写 lastuseddate 扩展属性触发的假变更，整条丢弃（不点卡、不进收件箱、不刷新）
+    if (filename) {
+      const abs = dir.replace(/\/$/, '') + '/' + String(filename);
+      const t = selfOpened.get(abs);
+      if (t) {
+        if (Date.now() - t < 3000) return;
+        selfOpened.delete(abs); // 过期条目顺手清掉，Map 不积垃圾
+      }
+    }
     // 记进会话级收件箱（跨所有监听目录，不止当前目录），供「变更」面板回看
     if (filename) recordChange(dir, String(filename));
     if (dir !== state.cwd || state.recentMode) return;
