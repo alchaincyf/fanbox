@@ -196,6 +196,12 @@ window.FANBOX_DICT = {
   '在内嵌终端里接上这段会话的上下文继续': "Resume this session's context in the embedded terminal",
   '▶ 续上': '▶ Resume',
   '已在终端续上会话': 'Session resumed in terminal',
+  '改标题（Claude Code 里也会同步显示）': 'Rename (also shows up in Claude Code)',
+  '标题已更新': 'Title updated',
+  '改标题失败': 'Failed to rename',
+  '标题不能为空': 'Title cannot be empty',
+  '无效会话 id': 'Invalid session id',
+  '找不到这个会话的日志文件': "Can't find this session's log file",
 
   // ---------- AI 整理（终端交互式）----------
   '没找到 claude / codex 命令——AI 整理需要装其中一个 CLI': 'claude / codex command not found — AI organize needs one of these CLIs installed',
