@@ -870,14 +870,23 @@ kbd {
 
 /* ---------- 桌面 app：交通灯避让 + 顶部可拖拽 ---------- */
 /* hiddenInset 标题栏的红绿灯坐在左上角，给侧栏 logo 让出空间（浏览器版无此问题，不受影响）*/
-.desktop #sidebar { padding-top: 40px; }
+/* 仅 macOS 需要避让，Windows 不需要 */
+.mac.desktop #sidebar { padding-top: 40px; }
+/* Windows：给 titleBarOverlay 留出顶部空间 + 右侧避让（最小化/最大化/关闭按钮约 130px） */
+.win.desktop #sidebar { padding-top: 48px; }
+.win.desktop #topbar { padding: 12px 160px 12px 12px; min-height: 48px; }
+/* macOS 顶栏也给点呼吸感 */
+.mac.desktop #topbar { padding-top: 8px; padding-bottom: 8px; }
 .desktop .brand { -webkit-app-region: drag; }
-/* 顶栏空白处也可拖窗，但其中的按钮/面包屑保持可点 */
+/* 整个顶栏可拖拽 */
 .desktop #topbar { -webkit-app-region: drag; }
 /* 侧栏不做整体拖拽区：#sidebar 自身是滚动容器（overflow-y:auto），而 Electron 的
    app-region:drag 区域收不到滚轮事件——整栏 drag 会让滚动时灵时卡（#6 的方案回退）。
    拖窗用品牌区和顶栏，足够顺手 */
-.desktop #topbar button, .desktop #topbar .breadcrumb, .desktop #topbar .seg, .desktop #topbar .toggle, .desktop #topbar input { -webkit-app-region: no-drag; }
+.desktop #topbar > * { -webkit-app-region: no-drag; }
+/* 面包屑和空白处恢复拖拽 */
+.desktop #topbar .breadcrumb { -webkit-app-region: drag; }
+.desktop #topbar .breadcrumb * { -webkit-app-region: no-drag; }
 
 /* 终端头：跟随/定位 文字按钮 */
 .term-actions #file-follow, .term-actions #term-locate { font-size: 11px; padding: 3px 8px; font-family: var(--font-ui); }
@@ -895,7 +904,10 @@ kbd {
 /* 浏览器版的纸纹来自 body、能从无背景的主区透出；桌面 app 上面这组不透明底色会盖住它，单独补回 */
 .desktop[data-theme="warm"] #main, .desktop[data-theme="warm"] #content { background-image: radial-gradient(rgba(140, 110, 70, 0.05) 1px, transparent 1px); background-size: 4px 4px; }
 .desktop #topbar { background-color: var(--bg-2); }
-.desktop #sidebar { background-color: color-mix(in srgb, var(--panel) 80%, transparent); }
+/* macOS：毛玻璃半透明 */
+.mac.desktop #sidebar { background-color: color-mix(in srgb, var(--panel) 80%, transparent); }
+/* Windows：不透明背景（不支持 vibrancy） */
+.win.desktop #sidebar { background-color: var(--panel); }
 
 /* 跟随/定位 改为图标+文字，覆盖前面的纯文字规则 */
 .term-actions #file-follow, .term-actions #term-locate { display: inline-flex; align-items: center; gap: 4px; }

@@ -39,19 +39,29 @@ function saveBounds() {
 
 function createWindow() {
   const b = loadBounds();
-  win = new BrowserWindow({
+  const isWin = process.platform === 'win32';
+  const opts = {
     width: b.width, height: b.height, x: b.x, y: b.y,
     minWidth: 920, minHeight: 600,
-    titleBarStyle: 'hiddenInset',
     backgroundColor: '#0b0c0a',
-    vibrancy: 'sidebar',
-    visualEffectState: 'active',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
     },
-  });
+  };
+  if (isWin) {
+    // Windows：隐藏标题栏，用自定义最小化/最大化/关闭按钮
+    opts.titleBarStyle = 'hidden';
+    opts.titleBarOverlay = { color: '#0b0c0a', symbolColor: '#8a8a8a', height: 36 };
+    opts.icon = path.join(__dirname, '..', 'build', 'icon.ico');
+  } else {
+    // macOS：隐藏标题栏 + 毛玻璃
+    opts.titleBarStyle = 'hiddenInset';
+    opts.vibrancy = 'sidebar';
+    opts.visualEffectState = 'active';
+  }
+  win = new BrowserWindow(opts);
   // 拖动/缩放后防抖记忆，关窗再存一次兜底
   let bt = null;
   const remember = () => { clearTimeout(bt); bt = setTimeout(saveBounds, 400); };
@@ -92,23 +102,32 @@ app.whenReady().then(() => {
 
 // ---------- 截图直通车：监听系统截屏落盘，新截图推给渲染层浮出直通卡 ----------
 function screenshotDir() {
-  try {
-    const out = require('child_process').execSync('defaults read com.apple.screencapture location 2>/dev/null', { encoding: 'utf8' }).trim();
-    if (out) return out.startsWith('~') ? path.join(os.homedir(), out.slice(1)) : out;
-  } catch { /* 未自定义 → 默认桌面 */ }
+  if (process.platform === 'darwin') {
+    try {
+      const out = require('child_process').execSync('defaults read com.apple.screencapture location 2>/dev/null', { encoding: 'utf8' }).trim();
+      if (out) return out.startsWith('~') ? path.join(os.homedir(), out.slice(1)) : out;
+    } catch { /* 未自定义 → 默认桌面 */ }
+    return path.join(os.homedir(), 'Desktop');
+  }
+  if (process.platform === 'win32') {
+    // Windows 截图默认保存到 图片\屏幕截图
+    return path.join(os.homedir(), 'Pictures', 'Screenshots');
+  }
   return path.join(os.homedir(), 'Desktop');
 }
 let shotWatcher = null;
 const shotSent = new Map(); // path -> t，fs.watch 同一文件会连发多个事件，3s 内去重
 function startShotWatch() {
-  if (process.platform !== 'darwin' || shotWatcher) return;
+  if (shotWatcher) return;
   const dir = screenshotDir();
   if (!fs.existsSync(dir)) return;
   try {
     shotWatcher = fs.watch(dir, { persistent: false }, (evt, filename) => {
       const name = filename ? filename.toString() : '';
       // 截屏写盘有「.截屏xxx.png」点前缀的中间态，跳过；只认系统截屏的命名习惯
-      if (!/^(截屏|截圖|截图|Screenshot|Screen Shot|CleanShot|SCR-)/i.test(name) || !/\.(png|jpe?g)$/i.test(name)) return;
+      // macOS: 截屏/Screenshot/Screen Shot/CleanShot/SCR-
+      // Windows: Screenshot (Win+Shift+S) / 屏幕截图
+      if (!/^(截屏|截圖|截图|Screenshot|Screen Shot|CleanShot|SCR-|屏幕截图)/i.test(name) || !/\.(png|jpe?g|bmp)$/i.test(name)) return;
       const fp = path.join(dir, name);
       setTimeout(() => { // 等写盘完成再确认
         fs.stat(fp, (err, st) => {
@@ -296,9 +315,15 @@ ipcMain.handle('clip:image', (e, { path: p }) => {
   catch (err) { return { ok: false, error: err.message }; }
 });
 ipcMain.handle('clip:file', (e, { path: p }) => new Promise((resolve) => {
-  const { execFile } = require('child_process');
-  // argv 传路径，避免拼进 AppleScript 字面量被注入
-  execFile('osascript', ['-e', 'on run argv', '-e', 'set the clipboard to (POSIX file (item 1 of argv))', '-e', 'end run', p], (err) => resolve({ ok: !err, error: err && err.message }));
+  const { execFile, exec } = require('child_process');
+  if (process.platform === 'win32') {
+    // Windows: 用 PowerShell 复制文件到剪贴板
+    const ps = p.replace(/'/g, "''");
+    exec(`powershell -NoProfile -Command "Set-Clipboard -Path '${ps}'"`, (err) => resolve({ ok: !err, error: err && err.message }));
+  } else {
+    // macOS: argv 传路径，避免拼进 AppleScript 字面量被注入
+    execFile('osascript', ['-e', 'on run argv', '-e', 'set the clipboard to (POSIX file (item 1 of argv))', '-e', 'end run', p], (err) => resolve({ ok: !err, error: err && err.message }));
+  }
 }));
 
 // 拖拽落盘：file-promise 类拖入（截图浮窗等）没有真实路径，把字节写进临时目录换路径
@@ -366,11 +391,20 @@ ipcMain.handle('pty:cwd', (e, { id }) => new Promise((resolve) => {
   const p = terminals.get(id);
   if (!p || !p.pid) return resolve({ ok: false });
   const { exec } = require('child_process');
-  exec(`lsof -a -p ${p.pid} -d cwd -Fn`, { env: { ...process.env, LC_ALL: 'en_US.UTF-8' } }, (err, stdout) => {
-    if (err) return resolve({ ok: false });
-    const line = stdout.split('\n').find((l) => l.startsWith('n'));
-    resolve(line ? { ok: true, cwd: decodeLsofPath(line.slice(1)) } : { ok: false });
-  });
+  if (process.platform === 'win32') {
+    // Windows: 用 wmic 获取进程工作目录
+    exec(`wmic process where ProcessId=${p.pid} get CommandLine /format:list`, { encoding: 'utf8' }, (err, stdout) => {
+      if (err) return resolve({ ok: false });
+      // 无法直接获取 cwd，返回 home 作为兜底
+      resolve({ ok: false });
+    });
+  } else {
+    exec(`lsof -a -p ${p.pid} -d cwd -Fn`, { env: { ...process.env, LC_ALL: 'en_US.UTF-8' } }, (err, stdout) => {
+      if (err) return resolve({ ok: false });
+      const line = stdout.split('\n').find((l) => l.startsWith('n'));
+      resolve(line ? { ok: true, cwd: decodeLsofPath(line.slice(1)) } : { ok: false });
+    });
+  }
 }));
 
 // 取终端前台进程名（node-pty 维护）：判断当前是裸 shell 还是正跑着 claude/codex 等程序

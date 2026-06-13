@@ -43,6 +43,27 @@
         }
       ]
     },
+    "win": {
+      "icon": "build/icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico",
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "FanBox"
+    },
     "dmg": {
       "title": "FanBox",
       "writeUpdateInfo": false
@@ -60,7 +81,7 @@
     "node-pty": "^1.0.0"
   },
   "devDependencies": {
-    "@electron/rebuild": "^3.7.0",
+    "@electron/rebuild": "^3.7.2",
     "@milkdown/crepe": "^7.21.2",
     "electron": "^33.2.0",
     "electron-builder": "^25.1.8",

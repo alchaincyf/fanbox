@@ -4,6 +4,11 @@
 const $ = (s) => document.querySelector(s);
 const api = (p) => fetch(p).then((r) => r.json());
 const apiPost = (p, body) => fetch(p, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then((r) => r.json());
+// 平台感知的快捷键符号：macOS 用 ⌘，Windows/Linux 用 Ctrl
+function modKey() {
+  const p = (window.fanboxEnv && window.fanboxEnv.platform) || navigator.platform || '';
+  return /mac|darwin/i.test(p) ? '⌘' : 'Ctrl';
+}
 
 // ---------- SVG 图标系统（替代 emoji，统一矢量审美） ----------
 const SVG = {
@@ -1014,7 +1019,7 @@ function buildImageEditor(e, img) {
       </div>
       <input type="color" id="ie-color" value="#ff3b30" title="颜色">
       <span class="ie-thick" title="粗细"><input type="range" id="ie-size" min="1" max="60" value="5"><i id="ie-dot"></i></span>
-      <button id="ie-undo" class="ghost-btn" title="撤销 ⌘Z">撤销</button>
+      <button id="ie-undo" class="ghost-btn" title="撤销 ${modKey()}Z">撤销</button>
     </div>
     <div class="imgedit-canvas-wrap"><canvas id="ie-canvas"></canvas></div>
     <div class="imgedit-export">
@@ -1205,7 +1210,7 @@ async function enterEditMode(e) {
   let getValue, baseline = ''; // baseline：编辑器内的「已保存基准」，用于未保存守卫
   const leave = async () => {
     if (getValue && getValue() !== baseline) {
-      const ok = await confirmDialog('有未保存的改动，放弃并退出？（保存请点取消后按 ⌘S）');
+      const ok = await confirmDialog(`有未保存的改动，放弃并退出？（保存请点取消后按 ${modKey()}S）`);
       if (!ok) return;
     }
     dirtyCheck = null; // 已在此确认过，避免 openPreview 的守卫再问一次
@@ -1230,7 +1235,7 @@ async function enterEditMode(e) {
   if (await mona.load()) {
     const monaco = window.monaco;
     body.innerHTML =
-      `<div class="editor-bar"><button id="ed-save" class="primary">保存</button><button id="ed-cancel" class="ghost-btn">完成</button><span class="editor-hint">⌘S 保存 · ⌘F 查找 · Esc 完成</span></div>` +
+      `<div class="editor-bar"><button id="ed-save" class="primary">保存</button><button id="ed-cancel" class="ghost-btn">完成</button><span class="editor-hint">${modKey()}S 保存 · ${modKey()}F 查找 · Esc 完成</span></div>` +
       `<div id="ed-host" class="mona-host"></div>`;
     const ed = monaco.editor.create($('#ed-host'), {
       value: data.content || '', language: mona.lang(ex), theme: mona.themeName(),
@@ -1247,7 +1252,7 @@ async function enterEditMode(e) {
     setTimeout(() => ed.focus(), 0);
   } else {
     body.innerHTML =
-      `<div class="editor-bar"><button id="ed-save" class="primary">保存</button><button id="ed-cancel" class="ghost-btn">完成</button><span class="editor-hint">⌘S 保存 · Esc 完成</span></div>` +
+      `<div class="editor-bar"><button id="ed-save" class="primary">保存</button><button id="ed-cancel" class="ghost-btn">完成</button><span class="editor-hint">${modKey()}S 保存 · Esc 完成</span></div>` +
       `<textarea id="ed-host" class="editor-area" spellcheck="false"></textarea>`;
     const ta = $('#ed-host');
     ta.value = data.content || '';
@@ -1299,7 +1304,7 @@ async function mdEditor(e, data, mode = 'rich') {
     mode = m;
     mona.disposeIfAny(); crepe.disposeIfAny();
     body.innerHTML =
-      `<div class="editor-bar"><button id="md-mode" class="ghost-btn">${m === 'rich' ? '源码' : '富文本'}</button><span id="md-status" class="editor-hint">自动保存 · ⌘S 立即保存</span></div>` +
+      `<div class="editor-bar"><button id="md-mode" class="ghost-btn">${m === 'rich' ? '源码' : '富文本'}</button><span id="md-status" class="editor-hint">自动保存 · ${modKey()}S 立即保存</span></div>` +
       `<div id="ed-host" class="${m === 'rich' ? 'crepe-host' : 'mona-host'}"></div>`;
     $('#md-mode').onclick = async () => {
       await flush();
@@ -1888,7 +1893,7 @@ function maybeShowGuide() {
     <h2>欢迎用 FanBox</h2>
     <p>vibe coding 的驾驶舱——找文件、跑 agent、看它改、随手改，都在一个窗口：</p>
     <ul>
-      <li><b>⌘K</b> 全局搜文件和文件夹；<b>⌘↵</b> 把项目直接在编辑器整包打开；<code>内容:关键词</code> 搜文件里的字</li>
+      <li><b>${modKey()}K</b> 全局搜文件和文件夹；<b>${modKey()}↵</b> 把项目直接在编辑器整包打开；<code>内容:关键词</code> 搜文件里的字</li>
       <li>顶部 <b>终端</b> 按钮开内嵌终端跑 Claude Code 等 agent；<b>把文件/文件夹拖进终端</b> 即插入路径喂给它当上下文</li>
       <li><b>单击</b> 预览，<b>双击</b> 系统打开；预览里 <b>编辑</b> md 走所见即所得、<b>编辑图片</b> 可标注/打码/转格式</li>
       <li>agent 改了哪些文件，列表实时高亮「改·N」，不用切窗口盯着看</li>
@@ -3722,7 +3727,11 @@ if (window.fanboxFs) {
 // ---------- 启动 ----------
 async function init() {
   // 桌面 app：标记 body，给顶部交通灯留位、顶部可拖拽
-  if (window.fanboxEnv && window.fanboxEnv.isDesktopApp) document.documentElement.classList.add('desktop');
+  if (window.fanboxEnv && window.fanboxEnv.isDesktopApp) {
+    document.documentElement.classList.add('desktop');
+    if (window.fanboxEnv.platform === 'win32') document.documentElement.classList.add('win');
+    if (window.fanboxEnv.platform === 'darwin') document.documentElement.classList.add('mac');
+  }
   applyTheme(state.theme, false);
   if (state.sidebarCollapsed) { $('#app').classList.add('sidebar-collapsed'); $('#btn-sidebar')?.classList.add('on'); }
   applyLayout();
