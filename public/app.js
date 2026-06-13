@@ -192,6 +192,7 @@ const state = {
   sidebarCollapsed: localStorage.getItem('fb_sidebar_collapsed') === '1',
   sidebarW: Math.min(420, Math.max(190, Number(localStorage.getItem('fb_sidebar_w')) || 248)),
   muted: localStorage.getItem('fb_muted') === '1', // WOW4 提示音静音开关
+  termFont: '', // 终端字体（从 ~/.fanbox/config.json 读取，为空则用 CSS 变量 --font-mono）
   changeLog: [], // 本会话 agent 改过的文件（跨所有监听目录，按文件去重、最新置顶），供「变更」面板回看
   changeTimeline: [], // 每一次写入事件（不去重，带时间戳），供「会话回放」拖时间轴重现
 };
@@ -1582,6 +1583,12 @@ async function loadFavorites() {
   state.recentOpened = data.recentOpened || [];
   renderFavs();
 }
+async function loadTermFont() {
+  try {
+    const r = await api('/api/config?key=termFont');
+    if (r && r.value) state.termFont = r.value;
+  } catch { /* config.json 不存在或没配 termFont，保持为空，用 CSS 变量兜底 */ }
+}
 function renderFavs() {
   const ul = $('#favs-list');
   ul.innerHTML = '';
@@ -2274,7 +2281,7 @@ const term = {
     host.classList.add('show'); // 先可见再 open/fit：display:none 下 fit 量不出尺寸，PTY 会以 80 列出生
     const FitCtor = window.FitAddon ? (window.FitAddon.FitAddon || window.FitAddon) : null;
     const xterm = new window.Terminal({
-      fontFamily: getComputedStyle(document.documentElement).getPropertyValue('--font-mono').trim() || 'monospace',
+      fontFamily: state.termFont || getComputedStyle(document.documentElement).getPropertyValue('--font-mono').trim() || 'monospace',
       fontSize: 13, lineHeight: 1.2, cursorBlink: true, theme: this.theme(), scrollback: 5000,
       allowProposedApi: true, // unicode11 宽度 API 需要
       // agent 常输出按深色终端设计的 256 色/真彩（如淡蓝路径），在浅色皮肤上几乎隐形；
@@ -3488,6 +3495,7 @@ async function init() {
   document.querySelectorAll('#theme-switch .theme-seg button').forEach((b) => { b.onclick = () => applyTheme(b.dataset.skin); });
   await loadRoots();
   await loadFavorites();
+  loadTermFont(); // 终端字体从 ~/.fanbox/config.json 读取，不阻塞 init
   loadAgentProjects();
   setInterval(loadAgentProjects, 120000); // agent 项目入口保持新鲜（服务端有 60s 缓存，开销很小）
   await navigate(state.home, false);

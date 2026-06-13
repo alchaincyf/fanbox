@@ -1892,6 +1892,23 @@ const server = http.createServer(async (req, res) => {
       await updateConfig((c) => { c.lang = lang; });
       return sendJSON(res, 200, { ok: true, lang });
     }
+    // 终端字体配置：前端只读 termFont，写入走相同 POST 端点
+    if (p === '/api/config') {
+      if (req.method === 'GET') {
+        const key = qp.get('key');
+        const cfg = await readConfig();
+        return sendJSON(res, 200, { key, value: cfg[key] || null });
+      }
+      if (req.method === 'POST') {
+        const b = await readBody(req);
+        if (!b.key || typeof b.key !== 'string') return sendJSON(res, 400, { error: '缺少 key' });
+        const key = b.key;
+        // 白名单：只允许透传已知的 UI 配置字段，config.json 里还有 recent/favorites 等内部数据
+        if (key !== 'termFont') return sendJSON(res, 400, { error: '不支持的配置项' });
+        const cfg = await updateConfig((c) => { c[key] = String(b.value || ''); });
+        return sendJSON(res, 200, { ok: true, key, value: cfg[key] || '' });
+      }
+    }
     if (p === '/api/organize/launch' && req.method === 'POST') {
       return sendJSON(res, 200, await organizeLaunch(await readBody(req)));
     }
