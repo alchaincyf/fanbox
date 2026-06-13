@@ -190,7 +190,6 @@ window.FANBOX_DICT = {
 
   // ---------- 项目记忆面板 ----------
   '翻会话日志中…': 'Digging through session logs…',
-  '项目记忆 · 浏览全部项目的会话记录': 'Project memory · browse sessions across all projects',
   '项目记忆 · 全部 Agent 项目': 'Project memory · All agent projects',
   '扫描项目中…': 'Scanning projects…',
   '选左侧一个项目查看它的会话': 'Pick a project on the left to see its sessions',
