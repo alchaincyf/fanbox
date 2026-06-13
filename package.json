@@ -36,10 +36,15 @@
       "gatekeeperAssess": false,
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist",
+      "artifactName": "${productName}-${version}-${arch}.${ext}",
       "target": [
         {
           "target": "dmg",
           "arch": "arm64"
+        },
+        {
+          "target": "dmg",
+          "arch": "x64"
         }
       ]
     },

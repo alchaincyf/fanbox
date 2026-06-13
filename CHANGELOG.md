@@ -11,6 +11,9 @@
 
 ## [Unreleased]
 
+### Added
+- Intel Mac (x64) 桌面版支持：mac.target 恢复同时打 arm64 + x64 两个 dmg。node-pty 自带 N-API prebuilds（darwin-arm64、darwin-x64），ABI 跨 Node/Electron 稳定，运行时按 `process.arch` 自动挑对应版本，无需为 x64 重新编译
+
 ## [1.9.1] - 2026-06-13
 
 ### Added

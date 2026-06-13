@@ -142,9 +142,9 @@ The UI was designed with [huashu-design](https://github.com/alchaincyf/huashu-de
 
 ### 桌面版（推荐）/ Desktop (recommended)
 
-从 [**Releases**](https://github.com/alchaincyf/fanbox/releases/latest) 下载最新 `.dmg`，拖进「应用程序」即可。Apple Silicon (arm64) 原生。
+从 [**Releases**](https://github.com/alchaincyf/fanbox/releases/latest) 下载最新 `.dmg`，拖进「应用程序」即可。Apple Silicon (arm64) 与 Intel (x64) 原生。
 
-Download the latest `.dmg` from [**Releases**](https://github.com/alchaincyf/fanbox/releases/latest) and drag it into Applications. Native Apple Silicon (arm64).
+Download the latest `.dmg` from [**Releases**](https://github.com/alchaincyf/fanbox/releases/latest) and drag it into Applications. Native Apple Silicon (arm64) and Intel (x64).
 
 > 已用 Apple Development 证书签名 + hardened runtime。首次打开若提示「未验证的开发者」：**右键 → 打开 → 确认**即可。  
 > Signed with an Apple Development certificate + hardened runtime. If macOS warns about an unverified developer on first launch: **right-click → Open → confirm**.
@@ -239,7 +239,7 @@ Every frontend dependency is vendored locally (`public/vendor/`) — that's what
 | 桌面壳 / Desktop shell | Electron 33 + node-pty（asarUnpack 原生模块）<br>Electron 33 + node-pty (asarUnpack native module) |
 | 终端 / Terminal | xterm.js + WebGL + unicode11 |
 | 编辑器 / Editors | Monaco（代码）+ Milkdown Crepe（Markdown）<br>Monaco (code) + Milkdown Crepe (Markdown) |
-| 打包 / Packaging | electron-builder → 签名 arm64 .dmg<br>electron-builder → signed arm64 .dmg |
+| 打包 / Packaging | electron-builder → 签名 arm64 + x64 .dmg<br>electron-builder → signed arm64 + x64 .dmg |
 
 <details>
 <summary>项目结构 / Project layout</summary>
