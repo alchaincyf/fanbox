@@ -21,6 +21,7 @@ try { pty = require('node-pty'); }
 catch (e) { console.error('[fanbox] node-pty 未就绪（跑 npm run rebuild）：', e.message); }
 
 const terminals = new Map();
+const termStartCwd = new Map(); // id -> spawn 时的起始目录；Windows 无 lsof、conpty 拿不到 shell 实时 cwd，用起始目录兜底
 let win = null;
 
 // ---------- 窗口尺寸/位置记忆 ----------
@@ -39,13 +40,15 @@ function saveBounds() {
 
 function createWindow() {
   const b = loadBounds();
+  const isMac = process.platform === 'darwin';
+  // 红绿灯 hiddenInset + 侧栏毛玻璃 vibrancy 是 macOS 专属；Windows/Linux 用原生标题栏（最稳，
+  // 也能正常拿到最小化/最大化/关闭）。对应的 .desktop CSS 红绿灯留白由渲染层按平台 class 收敛。
+  const macFrame = isMac ? { titleBarStyle: 'hiddenInset', vibrancy: 'sidebar', visualEffectState: 'active' } : {};
   win = new BrowserWindow({
     width: b.width, height: b.height, x: b.x, y: b.y,
     minWidth: 920, minHeight: 600,
-    titleBarStyle: 'hiddenInset',
     backgroundColor: '#0b0c0a',
-    vibrancy: 'sidebar',
-    visualEffectState: 'active',
+    ...macFrame,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -471,11 +474,13 @@ ipcMain.handle('pty:spawn', (e, { id, cwd, cols, rows, theme }) => {
     });
   } catch (err) { return { ok: false, error: err.message }; }
   terminals.set(id, p);
+  termStartCwd.set(id, startCwd);
   refreshLidGuard(); // 开关开着时，第一个终端起来即生效
   recStart(id, { cols, rows, cwd: startCwd, theme });
   p.onData((data) => { if (win && !win.isDestroyed()) win.webContents.send('pty:data', { id, data }); recEvent(id, 'o', data); });
   p.onExit(({ exitCode }) => {
     terminals.delete(id);
+    termStartCwd.delete(id);
     refreshLidGuard(); // 最后一个终端退出即恢复休眠
     recStop(id);
     if (win && !win.isDestroyed()) win.webContents.send('pty:exit', { id, exitCode });
@@ -487,11 +492,24 @@ ipcMain.handle('clip:image', (e, { path: p }) => {
   try { const img = nativeImage.createFromPath(p); if (img.isEmpty()) return { ok: false, error: '不是可读图片' }; clipboard.writeImage(img); return { ok: true }; }
   catch (err) { return { ok: false, error: err.message }; }
 });
-ipcMain.handle('clip:file', (e, { path: p }) => new Promise((resolve) => {
-  const { execFile } = require('child_process');
-  // argv 传路径，避免拼进 AppleScript 字面量被注入
-  execFile('osascript', ['-e', 'on run argv', '-e', 'set the clipboard to (POSIX file (item 1 of argv))', '-e', 'end run', p], (err) => resolve({ ok: !err, error: err && err.message }));
-}));
+ipcMain.handle('clip:file', (e, { path: p }) => {
+  if (process.platform === 'win32') {
+    // 复制文件本体到剪贴板（资源管理器里可粘贴）。Clipboard 必须在 STA 线程 → -STA；
+    // 路径经环境变量 FB_CLIP 传入，含空格/中文/引号也不会炸
+    const ps = 'Add-Type -AssemblyName System.Windows.Forms; $f=New-Object System.Collections.Specialized.StringCollection; $f.Add($env:FB_CLIP); [System.Windows.Forms.Clipboard]::SetFileDropList($f)';
+    return new Promise((resolve) => {
+      const { execFile } = require('child_process');
+      execFile('powershell', ['-NoProfile', '-NonInteractive', '-STA', '-Command', ps],
+        { env: { ...process.env, FB_CLIP: String(p || '') }, windowsHide: true, timeout: 8000 },
+        (err) => resolve({ ok: !err, error: err && err.message }));
+    });
+  }
+  return new Promise((resolve) => {
+    const { execFile } = require('child_process');
+    // argv 传路径，避免拼进 AppleScript 字面量被注入
+    execFile('osascript', ['-e', 'on run argv', '-e', 'set the clipboard to (POSIX file (item 1 of argv))', '-e', 'end run', p], (err) => resolve({ ok: !err, error: err && err.message }));
+  });
+});
 
 // 拖拽落盘：file-promise 类拖入（截图浮窗等）没有真实路径，把字节写进临时目录换路径
 ipcMain.handle('drop:save', (e, { name, buf }) => {
@@ -536,7 +554,7 @@ ipcMain.handle('drop:copy-into', (e, { srcPath, dir }) => {
 
 ipcMain.on('pty:input', (e, { id, data }) => { const p = terminals.get(id); if (p) { p.write(data); recEvent(id, 'i', data); } });
 ipcMain.on('pty:resize', (e, { id, cols, rows }) => { const p = terminals.get(id); if (p) { try { p.resize(cols, rows); } catch { /* */ } recEvent(id, 'r', `${cols}x${rows}`); } });
-ipcMain.on('pty:kill', (e, { id }) => { const p = terminals.get(id); if (p) { try { p.kill(); } catch { /* */ } terminals.delete(id); refreshLidGuard(); recStop(id); } });
+ipcMain.on('pty:kill', (e, { id }) => { const p = terminals.get(id); if (p) { try { p.kill(); } catch { /* */ } terminals.delete(id); termStartCwd.delete(id); refreshLidGuard(); recStop(id); } });
 
 // ---------- 录制文件管理 IPC ----------
 // 列表：读每个 .cast 的头行拿元信息 + 文件大小/时长（末事件时间），按新→旧。失败的文件跳过不报错。
@@ -601,6 +619,15 @@ ipcMain.handle('rec:save-export', (e, { name, buf }) => {
 });
 // 导出：渲染层录出的永远是 WebM；要 MP4/GIF 就用本机 ffmpeg 转一道（检测不到 ffmpeg 优雅退回 WebM）。
 function findFfmpeg() {
+  if (process.platform === 'win32') {
+    // Scoop/choco 装的 ffmpeg 在系统 PATH，where 能找到
+    try {
+      const out = require('child_process').execFileSync('where', ['ffmpeg'], { timeout: 3000, windowsHide: true, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+      const line = String(out).split(/\r?\n/).find(Boolean);
+      if (line) return line;
+    } catch { /* */ }
+    return null;
+  }
   for (const c of ['/opt/homebrew/bin/ffmpeg', '/usr/local/bin/ffmpeg', '/usr/bin/ffmpeg']) { try { if (fs.existsSync(c)) return c; } catch { /* */ } }
   return null;
 }
@@ -690,6 +717,12 @@ function decodeLsofPath(s) {
 ipcMain.handle('pty:cwd', (e, { id }) => new Promise((resolve) => {
   const p = terminals.get(id);
   if (!p || !p.pid) return resolve({ ok: false });
+  // Windows 没有 lsof，conpty 也拿不到 shell 子进程的实时 cwd：退回 spawn 起始目录。
+  // 点标签「定位到终端目录」会落在初始项目目录（用户多在项目根开 tab，多数场景正确）。
+  if (process.platform === 'win32') {
+    const cwd = termStartCwd.get(id);
+    return resolve(cwd ? { ok: true, cwd } : { ok: false });
+  }
   const { exec } = require('child_process');
   exec(`lsof -a -p ${p.pid} -d cwd -Fn`, { env: { ...process.env, LC_ALL: 'en_US.UTF-8' } }, (err, stdout) => {
     if (err) return resolve({ ok: false });

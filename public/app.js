@@ -4323,8 +4323,11 @@ if (window.fanboxFs) {
 
 // ---------- 启动 ----------
 async function init() {
-  // 桌面 app：标记 body，给顶部交通灯留位、顶部可拖拽
-  if (window.fanboxEnv && window.fanboxEnv.isDesktopApp) document.documentElement.classList.add('desktop');
+  // 桌面 app：标记 desktop，并按平台加 class（CSS 用 platform-darwin 收敛 mac 红绿灯 40px 留白等）
+  if (window.fanboxEnv && window.fanboxEnv.isDesktopApp) {
+    document.documentElement.classList.add('desktop');
+    document.documentElement.classList.add('platform-' + (window.fanboxEnv.platform || 'darwin'));
+  }
   try { window.fanboxWin?.trafficLights(true); } catch { /* 重载后兜底恢复系统按钮，防上次全屏藏了没显回来 */ }
   applyTheme(state.theme, false);
   if (state.sidebarCollapsed) { $('#app').classList.add('sidebar-collapsed'); $('#btn-sidebar')?.classList.add('on'); }
