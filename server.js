@@ -508,13 +508,35 @@ async function codexOrganizeFlags(bin) {
   return flags;
 }
 
+// 探测某个命令是否在 PATH 上（GUI 启动的 app 不继承用户 shell 的 PATH）。
+// macOS/Linux 走登录 shell（带全 Homebrew/nvm 等路径）；Windows 没有 login shell 机制，用 where.exe。
+function detectBin(name) {
+  return new Promise((resolve) => {
+    if (PLATFORM === 'win32') {
+      execFile('where', [name], { timeout: 8000, windowsHide: true }, (err, stdout) => resolve(!err && !!String(stdout || '').trim()));
+    } else {
+      execFile('/bin/sh', ['-lc', `command -v ${name}`], { timeout: 8000 }, (err, stdout) => resolve(!err && !!String(stdout || '').trim()));
+    }
+  });
+}
 async function findAgentBin(name) {
   // GUI 启动的 app 没有用户 shell 的 PATH，走登录 shell 找一次绝对路径
   return new Promise((resolve) => {
-    execFile('/bin/zsh', ['-lc', `command -v ${name}`], { timeout: 8000 }, (err, stdout) => {
-      const out = String(stdout || '').trim().split('\n').pop();
-      resolve(!err && out && out.startsWith('/') ? out : null);
-    });
+    if (PLATFORM === 'win32') {
+      // where 列出 .exe/.cmd/.ps1/.bat；优先 .exe > .cmd。返回值仅用于「是否装了」判断——
+      // 真正的启动命令用裸名（powershell 会按 PATH 解析 claude/codex），不依赖这里的绝对路径
+      execFile('where', [name], { timeout: 8000, windowsHide: true }, (err, stdout) => {
+        if (err) return resolve(null);
+        const lines = String(stdout || '').split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+        const pick = lines.find((l) => /\.exe$/i.test(l)) || lines.find((l) => /\.cmd$/i.test(l)) || lines[0];
+        resolve(pick || null);
+      });
+    } else {
+      execFile('/bin/zsh', ['-lc', `command -v ${name}`], { timeout: 8000 }, (err, stdout) => {
+        const out = String(stdout || '').trim().split('\n').pop();
+        resolve(!err && out && out.startsWith('/') ? out : null);
+      });
+    }
   });
 }
 
@@ -599,7 +621,7 @@ async function releaseInspect(p) {
   const status = await sh('git', ['status', '--porcelain']);
   out.isRepo = status !== null;
   out.dirty = !!(status && status.length);
-  out.gh = !!(await sh('/bin/sh', ['-lc', 'command -v gh']));
+  out.gh = await detectBin('gh');
   out.unreleased = ''; out.hasChangelog = false;
   try {
     const cl = await fsp.readFile(path.join(dir, 'CHANGELOG.md'), 'utf8');
@@ -782,7 +804,26 @@ async function projectMemory(p) {
 }
 
 // ---------- 磁盘占用透视：算清当前目录每个子项的真实占用 ----------
-// 文件直接 stat（快）；目录一次 du -sk 批量算。du 碰到无权限子目录会报错但仍输出能算的部分，所以忽略 err 只用 stdout
+// 文件直接 stat（快）；目录在 macOS/Linux 一次 du -sk 批量算（du 碰到无权限子目录会报错但仍输出能算的部分，忽略 err 只用 stdout）。
+// Windows 没有 du（Git Bash 自带的 /usr/bin/du 只在开发态可用，打包后双击启动的系统 PATH 里没有），
+// 退化成纯 Node 递归求和 + 共享截止时间，大目录（node_modules）也能及时返回部分值。
+async function dirSize(root, deadlineMs) {
+  let total = 0;
+  const stack = [root];
+  while (stack.length) {
+    if (Date.now() > deadlineMs) break;
+    const cur = stack.pop();
+    let ents;
+    try { ents = await fsp.readdir(cur, { withFileTypes: true }); } catch { continue; }
+    for (const e of ents) {
+      if (e.name === '.DS_Store') continue;
+      const full = path.join(cur, e.name);
+      if (e.isDirectory()) { if (!IGNORE_DIRS.has(e.name) && !e.isSymbolicLink()) stack.push(full); continue; }
+      try { total += (await fsp.lstat(full)).size; } catch { /* */ }
+    }
+  }
+  return total;
+}
 async function diskUsage(p) {
   const dir = resolvePath(p);
   let names;
@@ -794,12 +835,21 @@ async function diskUsage(p) {
     try { const st = await fsp.lstat(full); if (st.isFile()) items.push({ name: d.name, size: st.size, isDir: false }); } catch { /* */ }
   }));
   if (dirs.length) {
-    const out = await new Promise((resolve) => {
-      execFile('du', ['-sk', ...dirs], { timeout: 120000, maxBuffer: 8 * 1024 * 1024 }, (err, stdout) => resolve(stdout || ''));
-    });
-    for (const line of out.split('\n')) {
-      const m = line.match(/^(\d+)\s+(.+)$/);
-      if (m) items.push({ name: path.basename(m[2]), size: Number(m[1]) * 1024, isDir: true });
+    if (PLATFORM === 'win32') {
+      // 多目录共享一个截止时间，与 du -sk ...dirs 的「一次性算完」语义对齐
+      const deadline = Date.now() + 20000;
+      await Promise.all(dirs.map(async (d) => {
+        const size = await dirSize(d, deadline);
+        items.push({ name: path.basename(d), size, isDir: true });
+      }));
+    } else {
+      const out = await new Promise((resolve) => {
+        execFile('du', ['-sk', ...dirs], { timeout: 120000, maxBuffer: 8 * 1024 * 1024 }, (err, stdout) => resolve(stdout || ''));
+      });
+      for (const line of out.split('\n')) {
+        const m = line.match(/^(\d+)\s+(.+)$/);
+        if (m) items.push({ name: path.basename(m[2]), size: Number(m[1]) * 1024, isDir: true });
+      }
     }
   }
   items.sort((a, b) => b.size - a.size);
@@ -1170,13 +1220,88 @@ const thumbInflight = new Map(); // cacheFile -> Promise，去重并发生成
 function run(cmd, args) {
   return new Promise((resolve, reject) => execFile(cmd, args, { timeout: 15000 }, (e) => (e ? reject(e) : resolve())));
 }
-// 图片走 sips 缩放（快）；视频/PDF/其它走 qlmanage QuickLook 抽帧
+// Windows 没有 sips/qlmanage：图片缩略图走 PowerShell System.Drawing（.NET 自带，零依赖），
+// 视频走 ffmpeg（如装了），PDF/其它无原生工具时抛错让前端走矢量图标兜底。
+// PowerShell 脚本落盘到 THUMB_DIR/_thumb.ps1（首用时写一次），用 -File 调用——argv 传参，
+// 不把路径拼进命令字面量，含空格/中文/引号的路径也不会炸。
+let _psThumbScript = null;
+function psThumbScript() {
+  if (_psThumbScript) return _psThumbScript;
+  fs.mkdirSync(THUMB_DIR, { recursive: true });
+  const file = path.join(THUMB_DIR, '_thumb.ps1');
+  // 缩放保比例、HighQualityBicubic；jpeg 带 quality 参数，png 透明通道保留
+  fs.writeFileSync(file, `param([string]$src,[string]$out,[int]$size,[string]$fmt)
+$ErrorActionPreference='Stop'
+try {
+  Add-Type -AssemblyName System.Drawing
+  $img=[System.Drawing.Image]::FromFile($src)
+  try {
+    $w=[int]$img.Width; $h=[int]$img.Height
+    if($w -ge $h){ $nw=$size; $nh=[Math]::Max(1,[int]([double]$h*$size/$w)) } else { $nh=$size; $nw=[Math]::Max(1,[int]([double]$w*$size/$h)) }
+    $bmp=New-Object System.Drawing.Bitmap($nw,$nh)
+    try {
+      $g=[System.Drawing.Graphics]::FromImage($bmp)
+      try {
+        $g.InterpolationMode=[System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+        $g.PixelOffsetMode=[System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
+        $g.DrawImage($img,0,0,$nw,$nh)
+        if($fmt -eq 'png'){ $bmp.Save($out,[System.Drawing.Imaging.ImageFormat]::Png) }
+        else {
+          $enc=[System.Drawing.Imaging.ImageCodecInfo]::GetImageEncoders()|Where-Object{$_.MimeType -eq 'image/jpeg'}
+          $ep=New-Object System.Drawing.Imaging.EncoderParameters(1)
+          $ep.Param[0]=New-Object System.Drawing.Imaging.EncoderParameter([System.Drawing.Imaging.Encoder]::Quality,82L)
+          $bmp.Save($out,$enc,$ep)
+        }
+      } finally { $g.Dispose() }
+    } finally { $bmp.Dispose() }
+  } finally { $img.Dispose() }
+} catch { exit 1 }
+`);
+  _psThumbScript = file;
+  return file;
+}
+function psThumb(src, out, size, fmt) {
+  return new Promise((resolve, reject) => {
+    execFile('powershell', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psThumbScript(), '-src', src, '-out', out, '-size', String(size), '-fmt', fmt],
+      { timeout: 30000, windowsHide: true }, (e) => (e ? reject(e) : resolve()));
+  });
+}
+// ffmpeg 路径（缓存）：mac 查 homebrew，win 用 where.exe；都没有返回 null
+let _ffPath;
+async function ffmpegPath() {
+  if (_ffPath !== undefined) return _ffPath;
+  _ffPath = null;
+  if (PLATFORM === 'win32') {
+    const out = await new Promise((r) => execFile('where', ['ffmpeg'], { timeout: 3000, windowsHide: true }, (e, s) => r(e ? null : String(s || '').split(/\r?\n/)[0].trim())));
+    if (out) _ffPath = out;
+  } else {
+    for (const c of ['/opt/homebrew/bin/ffmpeg', '/usr/local/bin/ffmpeg', '/usr/bin/ffmpeg']) { try { if (fs.existsSync(c)) { _ffPath = c; break; } } catch { /* */ } }
+  }
+  return _ffPath;
+}
+function ffmpegThumb(src, out, size) {
+  return new Promise((resolve, reject) => {
+    ffmpegPath().then((ff) => {
+      if (!ff) return reject(new Error('no ffmpeg'));
+      // 抽约第 1 秒一帧（短视频也能取到），按 size 等比缩放（-2 保偶数）
+      execFile(ff, ['-y', '-ss', '1', '-i', src, '-frames:v', '1', '-vf', `scale=${size}:-2`, out],
+        { timeout: 30000, windowsHide: true }, (e) => (e ? reject(e) : resolve()));
+    }).catch(reject);
+  });
+}
+// 图片走 sips（mac）/ PowerShell System.Drawing（win）缩放（快）；视频/PDF：mac 走 qlmanage QuickLook 抽帧，win 视频走 ffmpeg
 async function generateThumb(src, e, size, cacheFile, isImg) {
   await fsp.mkdir(THUMB_DIR, { recursive: true });
   if (isImg) {
     const fmt = cacheFile.endsWith('.png') ? 'png' : 'jpeg';
+    if (PLATFORM === 'win32') { await psThumb(src, cacheFile, size, fmt); return; }
     await run('sips', ['-s', 'format', fmt, '-Z', String(size), src, '--out', cacheFile]);
     return;
+  }
+  if (PLATFORM === 'win32') {
+    if (VIDEO_EXT.has(e)) { await ffmpegThumb(src, cacheFile, size); return; }
+    // PDF 等无原生 thumbnailer：抛错让前端走矢量图标（PDF 预览本身走浏览器原生 viewer，不受影响）
+    throw new Error('no win thumbnailer for .' + e);
   }
   const tmpDir = path.join(THUMB_DIR, '_ql_' + process.pid + '_' + crypto.randomBytes(4).toString('hex'));
   await fsp.mkdir(tmpDir, { recursive: true });
@@ -1192,7 +1317,7 @@ async function pruneThumbs(maxBytes = 400 * 1024 * 1024) {
   try {
     const files = await fsp.readdir(THUMB_DIR);
     const stats = (await Promise.all(files.map(async (f) => {
-      if (f.startsWith('_ql_')) return null;
+      if (f.startsWith('_ql_') || f === '_thumb.ps1') return null;
       const fp = path.join(THUMB_DIR, f);
       try { const s = await fsp.stat(fp); return s.isFile() ? { fp, size: s.size, t: s.mtimeMs } : null; } catch { return null; }
     }))).filter(Boolean);
@@ -1243,7 +1368,18 @@ async function serveHeicAsJpeg(req, res, file, st) {
   if (fs.existsSync(cacheFile)) return send();
   let pr = thumbInflight.get(cacheFile);
   if (!pr) {
-    pr = (async () => { await fsp.mkdir(THUMB_DIR, { recursive: true }); await run('sips', ['-s', 'format', 'jpeg', file, '--out', cacheFile]); })()
+    pr = (async () => {
+      await fsp.mkdir(THUMB_DIR, { recursive: true });
+      if (PLATFORM === 'win32') {
+        // Windows 无 sips。优先 ffmpeg（若编译带了 libheif，最干净）；失败再试 PowerShell System.Drawing
+        // （靠系统是否装了 HEVC 图像扩展，Win10/11 多数装了）；都不行抛错走 415 图标兜底
+        const ff = await ffmpegPath();
+        if (ff) { try { await run(ff, ['-y', '-i', file, cacheFile]); return; } catch { /* 无 heif 解码器，往下试 */ } }
+        await psThumb(file, cacheFile, 9999, 'jpeg'); // size 给大值≈原尺寸，目的是解码不是缩放
+        return;
+      }
+      await run('sips', ['-s', 'format', 'jpeg', file, '--out', cacheFile]);
+    })()
       .finally(() => thumbInflight.delete(cacheFile));
     thumbInflight.set(cacheFile, pr);
   }
