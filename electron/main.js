@@ -494,15 +494,20 @@ ipcMain.handle('clip:image', (e, { path: p }) => {
 });
 ipcMain.handle('clip:file', (e, { path: p }) => {
   if (process.platform === 'win32') {
-    // 复制文件本体到剪贴板（资源管理器里可粘贴）。Clipboard 必须在 STA 线程 → -STA；
-    // 路径经环境变量 FB_CLIP 传入，含空格/中文/引号也不会炸
-    const ps = 'Add-Type -AssemblyName System.Windows.Forms; $f=New-Object System.Collections.Specialized.StringCollection; $f.Add($env:FB_CLIP); [System.Windows.Forms.Clipboard]::SetFileDropList($f)';
-    return new Promise((resolve) => {
-      const { execFile } = require('child_process');
-      execFile('powershell', ['-NoProfile', '-NonInteractive', '-STA', '-Command', ps],
-        { env: { ...process.env, FB_CLIP: String(p || '') }, windowsHide: true, timeout: 8000 },
-        (err) => resolve({ ok: !err, error: err && err.message }));
-    });
+    // 复制文件本体到剪贴板（资源管理器里可粘贴）。Clipboard 必须 STA 线程 → -STA；
+    // 路径经环境变量 FB_CLIP 传入，含空格/中文/引号也不会炸。
+    // SetFileDropList 偶发 OpenClipboard Failed（截图工具/输入法/Snipaste 正持有剪贴板）：
+    // PS try/catch 退出码 2 → main 侧重试一次（250ms）盖住绝大部分瞬时占用
+    const ps = 'try { Add-Type -AssemblyName System.Windows.Forms; $f=New-Object System.Collections.Specialized.StringCollection; $f.Add($env:FB_CLIP); [System.Windows.Forms.Clipboard]::SetFileDropList($f) } catch { exit 2 }';
+    const { execFile } = require('child_process');
+    const run = () => new Promise((resolve) => execFile('powershell', ['-NoProfile', '-NonInteractive', '-STA', '-Command', ps],
+      { env: { ...process.env, FB_CLIP: String(p || '') }, windowsHide: true, timeout: 8000 },
+      (err) => resolve(err)));
+    return (async () => {
+      let err = await run();
+      if (err) { await new Promise((r) => setTimeout(r, 250)); err = await run(); } // 剪贴板被占用，重试一次
+      return { ok: !err, error: err ? '剪贴板被其它程序占用，请重试' : undefined };
+    })();
   }
   return new Promise((resolve) => {
     const { execFile } = require('child_process');

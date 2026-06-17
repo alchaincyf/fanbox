@@ -14,7 +14,9 @@
     "build:hljs": "esbuild src-vendor/hljs-entry.js --bundle --format=iife --minify --outfile=public/vendor/hljs/highlight.js && cp node_modules/marked/marked.min.js public/vendor/marked/marked.min.js && cp node_modules/highlight.js/styles/github-dark.min.css node_modules/highlight.js/styles/github.min.css public/vendor/hljs/styles/",
     "check:vendor-patch": "grep -q '20===e.keyCode||229===e.keyCode' public/vendor/xterm/xterm.js",
     "predist": "npm run check:vendor-patch",
-    "dist": "electron-builder --mac"
+    "dist": "electron-builder --mac",
+    "dist:win": "electron-builder --win",
+    "dist:win:portable": "electron-builder --win portable"
   },
   "build": {
     "appId": "com.huashu.fanbox",
@@ -25,6 +27,7 @@
     },
     "asar": true,
     "npmRebuild": false,
+    "electronVersion": "33.4.11",
     "asarUnpack": [
       "**/node_modules/node-pty/**"
     ],
@@ -46,6 +49,19 @@
     "dmg": {
       "title": "FanBox",
       "writeUpdateInfo": false
+    },
+    "win": {
+      "icon": "build/icon-1024.png",
+      "target": [
+        { "target": "nsis", "arch": ["x64"] }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "deleteAppDataOnUninstall": false,
+      "artifactName": "FanBox-Setup-${version}-${arch}.exe"
     }
   },
   "type": "commonjs",
@@ -63,7 +79,7 @@
   "devDependencies": {
     "@electron/rebuild": "^3.7.0",
     "@milkdown/crepe": "^7.21.2",
-    "electron": "^33.2.0",
+    "electron": "33.4.11",
     "electron-builder": "^25.1.8",
     "esbuild": "^0.28.0",
     "highlight.js": "^11.11.1",

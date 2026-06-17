@@ -238,8 +238,12 @@ function pathSplit(p) { return String(p).split(/[\\/]/); }
 function pathBase(p) { const a = pathSplit(p).filter(Boolean); return a[a.length - 1] || p; }
 // 绝对路径判断：POSIX 以 / 或 ~ 开头；Windows 以 盘符:\ / 盘符:/ / UNC \\ 开头
 function isAbsPath(p) { return /^[\\/]/.test(p) || p.startsWith('~') || /^[A-Za-z]:[\\/]/.test(p); }
-// 拼路径：去掉前段尾分隔符再用 state.sep 连（兼容尾部是 / 或 \）
-function joinPath(a, b) { return String(a).replace(/[\\/]+$/, '') + state.sep + String(b).replace(/^[\\/]+/, ''); }
+// 拼路径：去掉前段尾分隔符再用 state.sep 连（兼容尾部是 / 或 \）。a/b 任一为空直接返回另一段，避免拼出形似 UNC 根的 `\x`
+function joinPath(a, b) {
+  const sa = String(a), sb = String(b);
+  if (!sa) return sb; if (!sb) return sa;
+  return sa.replace(/[\\/]+$/, '') + state.sep + sb.replace(/^[\\/]+/, '');
+}
 function tilde(p) { return state.home && p.startsWith(state.home) ? '~' + p.slice(state.home.length) : p; }
 function isFav(path) { return state.favorites.some((f) => f.path === path); }
 function toast(msg, isErr) {

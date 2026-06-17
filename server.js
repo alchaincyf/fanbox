@@ -807,22 +807,24 @@ async function projectMemory(p) {
 // 文件直接 stat（快）；目录在 macOS/Linux 一次 du -sk 批量算（du 碰到无权限子目录会报错但仍输出能算的部分，忽略 err 只用 stdout）。
 // Windows 没有 du（Git Bash 自带的 /usr/bin/du 只在开发态可用，打包后双击启动的系统 PATH 里没有），
 // 退化成纯 Node 递归求和 + 共享截止时间，大目录（node_modules）也能及时返回部分值。
+// du 口径：算全（含 node_modules/.git 等构建目录——du -sk 也是全算的），只跳符号链接防环。
+// 不套 IGNORE_DIRS（那是给 search/walk 提速用的，套上会让 Win 上 node_modules 报成 0，与 mac du 不一致）。
+// 返回 { size, truncated }：deadline 截断时 truncated=true，前端可标「估算中」。
 async function dirSize(root, deadlineMs) {
-  let total = 0;
+  let total = 0, truncated = false;
   const stack = [root];
   while (stack.length) {
-    if (Date.now() > deadlineMs) break;
+    if (Date.now() > deadlineMs) { truncated = true; break; }
     const cur = stack.pop();
     let ents;
     try { ents = await fsp.readdir(cur, { withFileTypes: true }); } catch { continue; }
     for (const e of ents) {
-      if (e.name === '.DS_Store') continue;
       const full = path.join(cur, e.name);
-      if (e.isDirectory()) { if (!IGNORE_DIRS.has(e.name) && !e.isSymbolicLink()) stack.push(full); continue; }
+      if (e.isDirectory()) { if (!e.isSymbolicLink()) stack.push(full); continue; }
       try { total += (await fsp.lstat(full)).size; } catch { /* */ }
     }
   }
-  return total;
+  return { size: total, truncated };
 }
 async function diskUsage(p) {
   const dir = resolvePath(p);
@@ -836,11 +838,11 @@ async function diskUsage(p) {
   }));
   if (dirs.length) {
     if (PLATFORM === 'win32') {
-      // 多目录共享一个截止时间，与 du -sk ...dirs 的「一次性算完」语义对齐
-      const deadline = Date.now() + 20000;
+      // 多目录共享一个截止时间，与 du -sk ...dirs 的「一次性算完」语义对齐；60s 对齐 du 的量级
+      const deadline = Date.now() + 60000;
       await Promise.all(dirs.map(async (d) => {
-        const size = await dirSize(d, deadline);
-        items.push({ name: path.basename(d), size, isDir: true });
+        const r = await dirSize(d, deadline);
+        items.push({ name: path.basename(d), size: r.size, isDir: true, truncated: r.truncated });
       }));
     } else {
       const out = await new Promise((resolve) => {
