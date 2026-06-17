@@ -2119,7 +2119,11 @@ const server = http.createServer(async (req, res) => {
     // 暴露面与 /api/raw 等价（都接受任意绝对路径），且同样只对本机回环开放。
     // HTML 文件额外注入 viewport，让预览框内宽度自适应、滚动稳定。
     if (p.startsWith('/fs/')) {
-      const fsPath = decodeURIComponent(p.slice(3));
+      // 去掉 '/fs/' 前缀（4 字符）。Windows 路径 D:/code/... 本身就是绝对路径直接用；
+      // POSIX 路径 Users/me/... 要补回开头的 / 才是绝对路径（mac 上 fsUrl 不带开头的 /）
+      let fsPath = p.slice(4);
+      if (PLATFORM !== 'win32' && !fsPath.startsWith('/')) fsPath = '/' + fsPath;
+      fsPath = decodeURIComponent(fsPath);
       const fsExt = (ext(fsPath) || '').toLowerCase();
       if (fsExt === 'html' || fsExt === 'htm') {
         return serveHtmlPreview(req, res, fsPath);
@@ -2289,7 +2293,10 @@ const previewServer = http.createServer(async (req, res) => {
   if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405); res.end('method not allowed'); return; }
   const p = new URL(req.url, `http://localhost:${PREVIEW_PORT}`).pathname;
   if (!p.startsWith('/fs/')) { res.writeHead(403); res.end('preview server serves /fs/ only'); return; }
-  const raw = decodeURIComponent(p.slice(3));
+  // 同主端口：Windows 路径 D:/... 是绝对路径；POSIX 要补回开头 /
+  let raw = p.slice(4);
+  if (PLATFORM !== 'win32' && !raw.startsWith('/')) raw = '/' + raw;
+  raw = decodeURIComponent(raw);
   let resolved;
   try { resolved = resolvePath(raw); } catch { res.writeHead(400); res.end('bad path'); return; }
   if (!previewPathAllowed(resolved)) { res.writeHead(403); res.end('outside preview scope'); return; }

@@ -183,7 +183,8 @@ window.__svgImg = richIcon({ name: '_.jpg', kind: 'image' }, 40);
 window.__svgVideo = richIcon({ name: '_.mp4', kind: 'video' }, 40);
 
 const state = {
-  cwd: null, home: null, platform: 'darwin', sep: '/',
+  // 首屏（/api/roots 返回前）的默认值：按浏览器 UA 嗅探，避免 win32 上用 mac 默认值导致首帧路径错乱
+  cwd: null, home: null, platform: /Windows/.test(navigator.userAgent) ? 'win32' : 'darwin', sep: /Windows/.test(navigator.userAgent) ? '\\' : '/',
   theme: localStorage.getItem('fb_theme') || 'warm',
   entries: [], project: null, history: [],
   view: localStorage.getItem('fb_view') || 'grid',
@@ -231,6 +232,14 @@ function fmtTime(ms) {
 // 跨平台路径处理：用服务端返回的分隔符
 function dirOf(p) { const i = p.lastIndexOf(state.sep); return i > 0 ? p.slice(0, i) : p; }
 function baseOf(p) { const parts = p.split(state.sep).filter(Boolean); return parts[parts.length - 1] || p; }
+// Windows 路径可能用 \ 或 /（终端进程路径多半是 \，fs.watch filename 也是 \），同时认两种分隔符切分。
+// pathBase 不依赖 state.sep——专门给「取终端进程名 / 文件名」这类要认两种分隔符的场景用。
+function pathSplit(p) { return String(p).split(/[\\/]/); }
+function pathBase(p) { const a = pathSplit(p).filter(Boolean); return a[a.length - 1] || p; }
+// 绝对路径判断：POSIX 以 / 或 ~ 开头；Windows 以 盘符:\ / 盘符:/ / UNC \\ 开头
+function isAbsPath(p) { return /^[\\/]/.test(p) || p.startsWith('~') || /^[A-Za-z]:[\\/]/.test(p); }
+// 拼路径：去掉前段尾分隔符再用 state.sep 连（兼容尾部是 / 或 \）
+function joinPath(a, b) { return String(a).replace(/[\\/]+$/, '') + state.sep + String(b).replace(/^[\\/]+/, ''); }
 function tilde(p) { return state.home && p.startsWith(state.home) ? '~' + p.slice(state.home.length) : p; }
 function isFav(path) { return state.favorites.some((f) => f.path === path); }
 function toast(msg, isErr) {
@@ -674,7 +683,7 @@ function csvTable(text, delim) {
 // 指向「预览专用端口」(主端口+1)：那个源只出文件、不含 /api，且与 App 跨源——
 // 配合 iframe 的 allow-same-origin，页面能完整交互又碰不到 App 本体（防接管/删文件）。
 function fsUrl(p, mtime) {
-  const segs = '/fs/' + p.split('/').filter(Boolean).map(encodeURIComponent).join('/') + '?v=' + (mtime || 0);
+  const segs = '/fs/' + pathSplit(p).filter(Boolean).map(encodeURIComponent).join('/') + '?v=' + (mtime || 0);
   const base = (location.protocol === 'http:' && location.port)
     ? `${location.protocol}//${location.hostname}:${Number(location.port) + 1}` : '';
   return base + segs;
@@ -1559,7 +1568,7 @@ const shotTray = {
     img.onclick = () => lightbox(m.path);
     el.querySelector('[data-act=term]').onclick = () => { term.insertPath(m.path); this.dismiss(); };
     el.querySelector('[data-act=save]').onclick = async () => {
-      const r = await apiPost('/api/move', { src: m.path, dstDir: state.cwd + '/素材' });
+      const r = await apiPost('/api/move', { src: m.path, dstDir: joinPath(state.cwd, '素材') });
       if (r.ok) toast('已收进 素材/'); else toast(r.error || '移动失败', true);
       this.dismiss();
     };
@@ -1704,7 +1713,7 @@ async function diskPanel(dirPath) {
     const max = d.items.length ? d.items[0].size : 1;
     const up = p !== '/' ? `<div class="disk-row disk-up" data-dir="${escapeHtml(dirOf(p))}"><span class="disk-name">↑ 上一级</span></div>` : '';
     body.innerHTML = `<div class="disk-total">共 ${fmtSize(d.total)}${d.more ? ` · 只显示前 ${d.items.length} 项` : ''}</div>` + up +
-      d.items.map((it) => `<div class="disk-row${it.isDir ? ' is-dir' : ''}" data-dir="${it.isDir ? escapeHtml(p + '/' + it.name) : ''}">
+      d.items.map((it) => `<div class="disk-row${it.isDir ? ' is-dir' : ''}" data-dir="${it.isDir ? escapeHtml(joinPath(p, it.name)) : ''}">
         <i class="disk-bar" style="width:${Math.max(1, Math.round(it.size / max * 100))}%"></i>
         <span class="disk-name">${it.isDir ? '📁 ' : ''}${escapeHtml(it.name)}</span><span class="disk-size">${fmtSize(it.size)}</span></div>`).join('');
     body.querySelectorAll('.disk-row[data-dir]').forEach((r) => {
@@ -2865,7 +2874,7 @@ const term = {
     try {
       const r = await window.fanboxPty.proc(s.id);
       if (!r || !r.ok || !r.proc) return false;
-      const name = String(r.proc).split('/').pop().replace(/^-/, '').toLowerCase();
+      const name = pathBase(r.proc).replace(/^-/, '').toLowerCase();
       return ['zsh', 'bash', 'fish', 'sh', 'dash', 'tcsh', 'nu', 'pwsh', 'powershell.exe', 'cmd.exe'].includes(name);
     } catch { return false; }
   },
@@ -2902,12 +2911,12 @@ const term = {
     let p = String(raw).replace(/^['"]+/, '').replace(/[)\]'"`,:;]+$/, '');
     let cwd = state.cwd;
     let candidate = p;
-    const isRel = !p.startsWith('/') && !p.startsWith('~');
+    const isRel = !isAbsPath(p);
     if (isRel) {
       try { const r = await window.fanboxPty.cwd(id); if (r && r.ok && r.cwd) cwd = r.cwd; } catch { /* */ }
-      candidate = (cwd || '').replace(/\/$/, '') + '/' + p.replace(/^\.\//, '');
+      candidate = joinPath(cwd || '', p.replace(/^\.\//, ''));
     }
-    const name = p.replace(/\/+$/, '').split('/').pop(); // 去掉目录结尾 / 再取 basename，否则名为空 basename 搜索失效
+    const name = pathBase(p); // 取 basename（兼容 / 与 \，尾部分隔符已由 filter(Boolean) 去掉）
     // 回扫 scrollback：agent 生成文件时几乎总打印过全路径（裸文件名常常不在 cwd 下），比模糊搜索可信
     const alt = isRel ? this.scanScrollbackFor(id, name, rowHint) : '';
     // 活跃项目根（浏览目录 + 各终端项目目录）作 basename 搜索的额外根
@@ -3601,9 +3610,9 @@ async function invokeSkillInTerm(name) {
   let prefix = '/';
   try {
     const r = await window.fanboxPty.proc(s.id);
-    const pn = String((r && r.proc) || '').split('/').pop().replace(/^-/, '').toLowerCase();
+    const pn = pathBase((r && r.proc) || '').replace(/^-/, '').toLowerCase();
     if (pn.includes('codex')) prefix = '$';
-    else if (['zsh', 'bash', 'fish', 'sh', 'dash', 'tcsh', 'nu'].includes(pn)) {
+    else if (['zsh', 'bash', 'fish', 'sh', 'dash', 'tcsh', 'nu', 'pwsh', 'powershell.exe', 'cmd.exe'].includes(pn)) {
       toast('终端里还没启动 agent——先点 Claude / Codex 启动按钮', true);
       s.xterm.focus();
       return;
@@ -3708,10 +3717,11 @@ const crepe = {
 
 // ---------- 变更收件箱（本会话 agent 改了哪些文件，可回看 / 看 diff）----------
 // 构建/依赖目录 + macOS 系统噪声目录（Library/缓存/废纸篓 后台无时无刻在写，不是 agent 干活，必须过滤）
-const CHANGE_IGNORE = new Set(['.git', 'node_modules', '.next', 'dist', 'build', '.cache', '.venv', 'venv', '__pycache__', '.DS_Store', 'target', '.turbo', '.expo', 'Library', 'Caches', '.Trash', 'CloudStorage', '.cocoapods', 'DerivedData']);
+// 构建/依赖目录 + 系统噪声目录（mac Library/缓存/废纸篓；win AppData/回收站 等后台无时无刻在写，不是 agent 干活，必须过滤）
+const CHANGE_IGNORE = new Set(['.git', 'node_modules', '.next', 'dist', 'build', '.cache', '.venv', 'venv', '__pycache__', '.DS_Store', 'target', '.turbo', '.expo', 'Library', 'Caches', '.Trash', 'CloudStorage', '.cocoapods', 'DerivedData', 'AppData', '$Recycle.Bin', 'ProgramData', 'node_modules.bin']);
 // 这次变更是不是该被忽略的系统/构建噪声（高亮、刷新、收件箱共用一套判断）
 function isNoisyChange(filename) {
-  const segs = String(filename).split('/');
+  const segs = pathSplit(filename);
   // 隐藏文件/目录一律算噪声：agent 写 .git、各种 .config 时用户什么都没的看（.DS_Store/.com.apple. 也被这条覆盖）
   if (segs.some((s) => CHANGE_IGNORE.has(s) || s.startsWith('.'))) return true;
   const name = segs[segs.length - 1];
@@ -3720,9 +3730,9 @@ function isNoisyChange(filename) {
 }
 function recordChange(dir, filename) {
   if (isNoisyChange(filename)) return; // 过滤构建/依赖/系统噪声
-  const segs = filename.split('/');
+  const segs = pathSplit(filename);
   const name = segs[segs.length - 1];
-  const full = dir.replace(/\/$/, '') + '/' + filename;
+  const full = joinPath(dir, filename);
   const now = Date.now();
   state.changeTimeline.push({ path: full, name, ts: now }); // 每次写入都记一笔，供会话回放
   if (state.changeTimeline.length > 3000) state.changeTimeline.shift();
@@ -3879,7 +3889,7 @@ const NOEXT_TEXT = new Set(['Makefile', 'Dockerfile', 'LICENSE', 'README', 'CHAN
   'Rakefile', 'Brewfile', 'Caddyfile', 'Justfile', 'Vagrantfile', 'Jenkinsfile']);
 function isFollowArtifact(name) {
   const base = baseOf(String(name || ''));
-  const segs = String(name).split('/');
+  const segs = pathSplit(name);
   if (segs.some((s) => /\.(app|framework|xcarchive|bundle)$/i.test(s))) return true; // .app 等「包」内部的一切都算产物
   const dot = base.lastIndexOf('.');
   if (dot <= 0) return !NOEXT_TEXT.has(base); // 无扩展名：白名单外当二进制（编译出的可执行多半没扩展名）
@@ -3947,7 +3957,7 @@ function followChange(dir, sub) {
     setFileFollow(false, '绑定的终端已关闭，文件跟随已停');
     return;
   }
-  const full = dir.replace(/\/$/, '') + '/' + sub;
+  const full = joinPath(dir, sub);
   if (!inFollowScope(full)) return; // 别的项目/别的 App 写的文件，不归这次跟随管
   if (!boundAgentActive()) return;  // 绑定的 agent 此刻没在干活——这笔多半是别的 tab 写的，不抢屏
   if (full === follow.path) { scheduleFollowRender(); return; }
@@ -4271,7 +4281,7 @@ if (window.fanboxFs) {
     if (filename && isNoisyChange(filename)) return;
     // 自己刚打开的文件：macOS 写 lastuseddate 扩展属性触发的假变更，整条丢弃（不点卡、不进收件箱、不刷新）
     if (filename) {
-      const abs = dir.replace(/\/$/, '') + '/' + String(filename);
+      const abs = joinPath(dir, String(filename));
       const t = selfOpened.get(abs);
       if (t) {
         if (Date.now() - t < 3000) return;
@@ -4284,14 +4294,14 @@ if (window.fanboxFs) {
     if (filename) followChange(dir, String(filename));
     // 打开中的 md 编辑器若对应的磁盘文件被外部（如 agent / 命令行）改了：未脏就静默重载，脏则不动（保存时 mtime 冲突保护会拦）
     if (filename && currentEditor) {
-      const abs = dir.replace(/\/$/, '') + '/' + String(filename);
+      const abs = joinPath(dir, String(filename));
       if (abs === currentEditor.path && !currentEditor.isDirty()) currentEditor.reload();
     }
     if (dir !== state.cwd || state.recentMode) return;
     // 高亮被 agent 改动的项：递归监听下 src/foo.js 归到顶层 src，并累计计数 + 记子路径供 tooltip 定位
     if (filename) {
       const sub = String(filename);
-      const top = sub.split('/')[0];
+      const top = pathSplit(sub)[0];
       let rec = state.changed.get(top);
       if (!rec) { rec = { count: 0, files: new Set(), ts: 0 }; state.changed.set(top, rec); }
       rec.count++; rec.ts = Date.now();
@@ -4333,9 +4343,11 @@ async function init() {
     const src = decodeURI(img.getAttribute('src') || '');
     if (/^(https?:|data:|blob:)/.test(src) || src.startsWith('/api/') || src.startsWith('/fs/')) return;
     let abs = src;
-    if (!abs.startsWith('/')) {
-      const stack = (state.selected || '').split('/').slice(0, -1);
-      for (const seg of abs.split('/')) {
+    // 相对路径：相对当前 md 文件所在目录解析。pathSplit 同时认 / 与 \（md src 多用 /，Windows 文件路径是 \）；
+    // 拼回时统一用 /（这是给 /fs/ URL 用的路径，盘符 C: 成为首段，server resolvePath 认 C:/ 形式）
+    if (!isAbsPath(abs)) {
+      const stack = pathSplit(state.selected || '').slice(0, -1);
+      for (const seg of pathSplit(abs)) {
         if (seg === '..') stack.pop(); else if (seg && seg !== '.') stack.push(seg);
       }
       abs = '/' + stack.filter(Boolean).join('/');
