@@ -3142,6 +3142,16 @@ const term = {
             if (isTruncated) truncated.push({ s: m.index, e: m.index + raw.length, cand: raw, tail });
             else r2.push({ s: m.index, e: m.index + raw.length, cand: raw, tail });
           }
+          // 2b. Windows 绝对路径（盘符:\ 或 盘符:/）：含 \ 不含 /，上面 reP「必须有 /」匹配不到。
+          // lookbehind 排除前面是 字母/数字/_/斜杠 —— 挡住 http:// 里那个 p: 被当成盘符的误伤。
+          // 命中塞进 r2，走下面同样的 /api/term-verify 验证（绝对路径服务端不再拼 cwd）
+          const reWin = /(?<![\w/])[A-Za-z]:[\\/][^\s'"`:()（）「」【】<>：；，。、？！]+/g;
+          while ((m = reWin.exec(t)) !== null) {
+            let raw = m[0].replace(/[)\],.:;。，？！）】>]+$/, '');
+            if (raw.length < 4 || overlaps(m.index, m.index + raw.length)) continue;
+            const tail = t.slice(m.index + raw.length).split(/['"`]/)[0].slice(0, 160);
+            r2.push({ s: m.index, e: m.index + raw.length, cand: raw, tail });
+          }
           // 截断路径直接创建链接，避免验证失败导致无法点击
           truncated.forEach((x) => push(x.s, x.e, x.cand, x.tail));
           // 目录候选（结尾 /）：和带扩展名的裸文件名享受同等兜底——验证通过则用精确路径，

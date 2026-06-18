@@ -84,10 +84,15 @@ npm run dist:win          # → dist/FanBox-Setup-1.13.0-x64.exe
 
 ## 已知限制（非阻断）
 
-1. **HEIC 预览**依赖系统是否装了 HEVC 图像扩展（Win10/11 多数装了，iPhone 用户基本都有）；没装则显示文件图标，不影响其它。
-2. **终端 scrollback 里的 `C:\code\x` 路径**点不开：链接检测 regex 强依赖 `/`，且 `C:` 的冒号在切断集里。修需重新调 regex（风险高、无法 CLI 验证渲染），暂留。`/` 形式的路径（多数 agent 输出）正常可点。
-3. **合盖不休眠**、**系统截屏直通车**、**微信 ClawBot** 是 mac 专属能力，Windows 上整块跳过（优雅降级，不报错）。
-4. **HTML 预览 iframe** 的图片受预览端口 HOME 作用域限制：项目若不在主目录所在盘（如项目在 D:、主目录在 C:），iframe 里的本地图片会被安全策略挡。markdown 图片走主端口 /fs/ 不受此限。
+1. **HEIC 预览**依赖系统是否装了 HEVC 图像扩展（Win10/11 多数装了，iPhone 用户基本都有）；没装则显示文件图标，不影响其它。（本机 ffmpeg 无 `heif` demuxer，救不了；若用户装了带 libheif 的 ffmpeg 会自动走它。）
+2. **合盖不休眠**（pmset）、**微信 ClawBot**（依赖 itchat/openclaw mac 插件生态）是 mac 专属能力，Windows 上整块跳过（优雅降级，不报错）。
+3. **HTML 预览 iframe** 的图片受预览端口 HOME 作用域限制：项目若不在主目录所在盘（如项目在 D:、主目录在 C:），iframe 里的本地图片会被安全策略挡。markdown 图片走主端口 /fs/ 不受此限。
+4. Windows 版**未签名**（SmartScreen 首次会警告）——需 Windows 代码签名证书才干净，得作者自己来。
+
+## 本轮（push 前最后一轮）补的
+
+- **终端里的 Windows 路径可点了**：原来 scrollback 链接检测只认 `/`，`C:\code\app.js` 点不开。加了盘符路径专用检测（lookbehind 挡 `http://` 的 `p:` 误伤）+ 修了 `termVerify` 给绝对路径乱拼 cwd 的 bug。regex 单测 + term-verify 接口单测都过。
+- **截图直通车支持 Windows**：原来 mac 专属。现监听 `~/Pictures/Screenshots`（Win+PrintScreen）+ `~/OneDrive/Pictures/Screenshots`（OneDrive 接管），新截图同样推 shot:new 浮出直通卡。实测：丢文件进去渲染层收到事件（含空格+括号文件名）。
 
 ## 验证矩阵
 

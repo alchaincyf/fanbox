@@ -1016,7 +1016,9 @@ async function termVerify(b) {
   const results = await Promise.all(items.map(async (it) => {
     if (!it || typeof it.cand !== 'string') return false;
     let p = it.cand;
-    if (!p.startsWith('/') && !p.startsWith('~')) p = cwd.replace(/\/$/, '') + '/' + p.replace(/^\.\//, '');
+    // 绝对路径直接用（POSIX /、~ 、Windows 盘符 C:\ / UNC \\）；相对路径才拼 cwd
+    const isAbs = p.startsWith('/') || p.startsWith('~') || /^[A-Za-z]:[\\/]/.test(p) || p.startsWith('\\\\');
+    if (!isAbs) p = cwd.replace(/[\\/]+$/, '') + path.sep + p.replace(/^\.\//, '');
     return !!(await statWithTail(p, it.tail || ''));
   }));
   return { ok: true, results };

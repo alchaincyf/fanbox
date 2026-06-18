@@ -107,44 +107,60 @@ app.whenReady().then(() => {
 });
 
 // ---------- 截图直通车：监听系统截屏落盘，新截图推给渲染层浮出直通卡 ----------
-function screenshotDir() {
+// 截图目录（可能多个）：mac 读 screencapture 自定义位置（默认桌面）；win 是 Win+PrintScreen 落的
+// ~/Pictures/Screenshots（OneDrive 接管自动保存时落 OneDrive 下），两个都盯
+function screenshotDirs() {
+  if (process.platform === 'win32') {
+    const pics = path.join(os.homedir(), 'Pictures', 'Screenshots');
+    const one = path.join(os.homedir(), 'OneDrive', 'Pictures', 'Screenshots');
+    const out = [];
+    for (const d of [one, pics]) { try { if (fs.statSync(d).isDirectory()) out.push(d); } catch { /* */ } }
+    return out;
+  }
   try {
     const out = require('child_process').execSync('defaults read com.apple.screencapture location 2>/dev/null', { encoding: 'utf8' }).trim();
-    if (out) return out.startsWith('~') ? path.join(os.homedir(), out.slice(1)) : out;
+    if (out) return [out.startsWith('~') ? path.join(os.homedir(), out.slice(1)) : out];
   } catch { /* 未自定义 → 默认桌面 */ }
-  return path.join(os.homedir(), 'Desktop');
+  return [path.join(os.homedir(), 'Desktop')];
 }
-let shotWatcher = null;
+const shotWatchers = []; // 多目录各自一个 watcher
 const shotSent = new Map(); // path -> t，fs.watch 同一文件会连发多个事件，3s 内去重
 function startShotWatch() {
-  if (process.platform !== 'darwin' || shotWatcher) return;
-  const dir = screenshotDir();
-  if (!fs.existsSync(dir)) return;
-  try {
-    shotWatcher = fs.watch(dir, { persistent: false }, (evt, filename) => {
-      const name = filename ? filename.toString() : '';
-      // 截屏写盘有「.截屏xxx.png」点前缀的中间态，跳过；只认系统截屏的命名习惯
-      if (!/^(截屏|截圖|截图|Screenshot|Screen Shot|CleanShot|SCR-)/i.test(name) || !/\.(png|jpe?g)$/i.test(name)) return;
-      const fp = path.join(dir, name);
-      // 等写盘「真正完成」再通知：Retina 全屏截图有几 MB，固定等 600ms 可能文件还在写，
-      // 缩略图会拿到半截文件生成失败→裂图。改成轮询直到大小连续两次不变（最多 ~3s）。
-      const waitStable = (tries, lastSize) => {
-        fs.stat(fp, (err, st) => {
-          if (err || !st.isFile()) return;
-          if (st.size >= 1000 && st.size === lastSize) { // 大小稳定 = 写完
-            const last = shotSent.get(fp) || 0;
-            if (Date.now() - last < 3000) return;
-            shotSent.set(fp, Date.now());
-            if (shotSent.size > 50) { const k = shotSent.keys().next().value; shotSent.delete(k); }
-            if (win && !win.isDestroyed()) win.webContents.send('shot:new', { path: fp, name, size: st.size });
-            return;
-          }
-          if (tries > 0) setTimeout(() => waitStable(tries - 1, st.size), 250); // 还在涨，再等
-        });
-      };
-      setTimeout(() => waitStable(12, -1), 350);
-    });
-  } catch { /* 无权限等，静默放弃 */ }
+  if (shotWatchers.length) return;
+  const dirs = screenshotDirs();
+  if (!dirs.length) return;
+  // 文件名闸：mac 截屏命名多变（截屏/Screenshot/Screen Shot/CleanShot…）需前缀正则；
+  // win 的 Screenshots 文件夹本身就是截图专用，里面任何新图片都算截图
+  const isShotName = (name) => process.platform === 'win32'
+    ? /\.(png|jpe?g)$/i.test(name)
+    : (/^(截屏|截圖|截图|Screenshot|Screen Shot|CleanShot|SCR-)/i.test(name) && /\.(png|jpe?g)$/i.test(name));
+  for (const dir of dirs) {
+    try {
+      const w = fs.watch(dir, { persistent: false }, (evt, filename) => {
+        const name = filename ? filename.toString() : '';
+        if (!isShotName(name)) return;
+        const fp = path.join(dir, name);
+        // 等写盘「真正完成」再通知：全屏截图有几 MB，固定等可能文件还在写，缩略图会拿到半截→裂图。
+        // 改成轮询直到大小连续两次不变（最多 ~3s）。
+        const waitStable = (tries, lastSize) => {
+          fs.stat(fp, (err, st) => {
+            if (err || !st.isFile()) return;
+            if (st.size >= 1000 && st.size === lastSize) { // 大小稳定 = 写完
+              const last = shotSent.get(fp) || 0;
+              if (Date.now() - last < 3000) return;
+              shotSent.set(fp, Date.now());
+              if (shotSent.size > 50) { const k = shotSent.keys().next().value; shotSent.delete(k); }
+              if (win && !win.isDestroyed()) win.webContents.send('shot:new', { path: fp, name, size: st.size });
+              return;
+            }
+            if (tries > 0) setTimeout(() => waitStable(tries - 1, st.size), 250); // 还在涨，再等
+          });
+        };
+        setTimeout(() => waitStable(12, -1), 350);
+      });
+      shotWatchers.push(w);
+    } catch { /* 无权限等，静默放弃 */ }
+  }
 }
 
 // ---------- 更新检测：查 GitHub Releases，有新版本通知渲染层引导下载 ----------
