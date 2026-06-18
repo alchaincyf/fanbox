@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>微信 ClawBot · 终端原生面板</title>
+<style>
+  :root{
+    --bg:#ece2d2;
+    --page:#d9ccb6;
+    --panel-deep:#e7dcc9;
+    --panel-light:#f0e7d8;
+    --ink:#4a3f30;
+    --ink2:#8a7d68;
+    --accent:#cc785c;
+    --line:rgba(74,63,48,.12);
+    --wx:#07C160;
+    --mono:ui-monospace,"SF Mono",Menlo,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Helvetica Neue","PingFang SC",sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  html,body{background:var(--page);color:var(--ink);font-family:var(--sans);
+    -webkit-font-smoothing:antialiased;}
+  body{padding:48px 0 80px;}
+  .stage{width:980px;margin:0 auto;}
+  .lbl{font-style:italic;font-size:12.5px;color:var(--ink2);
+    margin:40px 0 12px;letter-spacing:.2px;}
+  .stage > .lbl:first-child{margin-top:0;}
+
+  /* ---- panel = a block inside the terminal ---- */
+  .panel{
+    background:var(--panel-deep);
+    border:1px solid var(--line);
+    border-radius:10px;
+    overflow:hidden;
+    box-shadow:0 1px 0 rgba(255,255,255,.4) inset, 0 8px 24px rgba(74,63,48,.07);
+  }
+
+  /* ---- title bar: one hair-thin row ---- */
+  .bar{
+    display:flex;align-items:center;gap:10px;
+    height:42px;padding:0 14px;
+    border-bottom:1px solid var(--line);
+    background:linear-gradient(180deg,var(--panel-light),var(--panel-deep));
+  }
+  .bar .name{font-size:13px;font-weight:600;letter-spacing:.2px;}
+  .dot{width:7px;height:7px;border-radius:50%;flex:none;}
+  .dot.on{background:var(--wx);box-shadow:0 0 0 3px rgba(7,193,96,.16);}
+  .dot.off{background:var(--ink2);opacity:.4;}
+  .spacer{flex:1;}
+
+  /* quiet dropdown trigger */
+  .picker{position:relative;}
+  .trigger{
+    display:inline-flex;align-items:center;gap:6px;
+    height:26px;padding:0 9px;
+    font-size:12.5px;color:var(--ink);
+    background:transparent;border:1px solid transparent;border-radius:6px;
+    cursor:pointer;font-family:var(--sans);
+  }
+  .trigger:hover{background:rgba(74,63,48,.05);border-color:var(--line);}
+  .trigger .target{font-family:var(--mono);font-size:12px;}
+  .caret{width:8px;height:8px;flex:none;opacity:.55;}
+
+  /* ---- content ---- */
+  .body{padding:26px 22px;}
+
+  /* state 1: qr */
+  .qr-wrap{display:flex;flex-direction:column;align-items:center;
+    padding:30px 0 26px;}
+  .qr{
+    width:188px;height:188px;background:var(--panel-light);
+    border:1px solid var(--line);border-radius:14px;
+    padding:14px;box-shadow:0 4px 14px rgba(74,63,48,.06);
+  }
+  .qr svg{display:block;width:100%;height:100%;}
+  .qr-cap{margin-top:20px;text-align:center;font-size:13.5px;
+    color:var(--ink);line-height:1.6;max-width:330px;}
+  .qr-cap .mute{color:var(--ink2);font-size:12.5px;}
+
+  /* state 2: chat */
+  .chat{display:flex;flex-direction:column;gap:16px;}
+  .row{display:flex;gap:10px;align-items:flex-end;}
+  .row.me{justify-content:flex-end;}
+  .av{width:26px;height:26px;border-radius:7px;flex:none;
+    display:flex;align-items:center;justify-content:center;
+    font-size:11px;font-weight:600;font-family:var(--mono);
+    background:var(--panel-light);border:1px solid var(--line);color:var(--ink2);}
+  .av.bot{background:var(--accent);color:#fff;border-color:transparent;}
+  .bubble{
+    max-width:560px;padding:10px 13px;border-radius:12px;
+    font-size:13.5px;line-height:1.62;
+  }
+  .bubble.from{background:var(--panel-light);border:1px solid var(--line);
+    border-bottom-left-radius:4px;}
+  .bubble.mine{background:var(--accent);color:#fff;
+    border-bottom-right-radius:4px;}
+  .bubble code,.code{font-family:var(--mono);font-size:12px;}
+  .code{
+    display:block;margin-top:8px;padding:9px 11px;
+    background:#efe4d0;border:1px solid var(--line);border-radius:8px;
+    color:var(--ink);line-height:1.55;white-space:pre;overflow-x:auto;
+  }
+  .code .k{color:var(--accent);}
+  .code .c{color:var(--ink2);}
+  .pass{display:inline-flex;align-items:center;gap:6px;
+    font-family:var(--mono);font-size:12.5px;}
+  .pass .ck{color:var(--wx);font-weight:700;}
+
+  /* state 3: open menu */
+  .menu-scene{position:relative;}
+  .menu{
+    position:absolute;top:34px;right:0;width:212px;
+    background:rgba(243,235,222,.92);
+    backdrop-filter:saturate(160%) blur(14px);
+    -webkit-backdrop-filter:saturate(160%) blur(14px);
+    border:1px solid rgba(74,63,48,.16);border-radius:10px;
+    padding:5px;
+    box-shadow:0 12px 34px rgba(74,63,48,.22),0 2px 6px rgba(74,63,48,.12),
+      0 0 0 .5px rgba(255,255,255,.5) inset;
+    z-index:5;
+  }
+  .mi{
+    display:flex;align-items:center;gap:9px;
+    height:30px;padding:0 9px;border-radius:6px;
+    font-size:13px;cursor:default;
+  }
+  .mi .check{width:14px;flex:none;color:var(--accent);font-size:12px;}
+  .mi .mname{font-family:var(--mono);font-size:12.5px;}
+  .mi.active{background:rgba(204,120,92,.14);}
+  .mi.hover{background:var(--accent);color:#fff;}
+  .mi.hover .check{color:#fff;}
+  .mi.danger{color:#a8503a;}
+  .sep{height:1px;background:var(--line);margin:5px 8px;}
+  .trigger.opened{background:rgba(74,63,48,.06);border-color:var(--line);}
+  .dim{filter:saturate(.96);}
+</style>
+</head>
+<body>
+<div class="stage">
+
+  <!-- ① 未连接·扫码 -->
+  <p class="lbl">① 未连接 · 扫码绑定</p>
+  <div class="panel">
+    <div class="bar">
+      <span class="dot off"></span>
+      <span class="name">微信 ClawBot</span>
+      <span class="spacer"></span>
+      <button class="trigger" type="button">
+        <span>连到 <span class="target">Codex</span></span>
+        <svg class="caret" viewBox="0 0 10 6"><path d="M1 1l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+    </div>
+    <div class="body">
+      <div class="qr-wrap">
+        <div class="qr">
+          <svg viewBox="0 0 29 29" shape-rendering="crispEdges" role="img" aria-label="二维码占位">
+            <rect width="29" height="29" fill="#f0e7d8"/>
+            <g fill="#4a3f30">
+              <!-- finder TL -->
+              <path d="M1 1h7v7h-7z"/><rect x="2" y="2" width="5" height="5" fill="#f0e7d8"/><rect x="3" y="3" width="3" height="3" fill="#4a3f30"/>
+              <!-- finder TR -->
+              <path d="M21 1h7v7h-7z"/><rect x="22" y="2" width="5" height="5" fill="#f0e7d8"/><rect x="23" y="3" width="3" height="3" fill="#4a3f30"/>
+              <!-- finder BL -->
+              <path d="M1 21h7v7h-7z"/><rect x="2" y="22" width="5" height="5" fill="#f0e7d8"/><rect x="3" y="23" width="3" height="3" fill="#4a3f30"/>
+              <!-- timing + scattered data modules -->
+              <rect x="10" y="2" width="1" height="1"/><rect x="12" y="2" width="1" height="1"/><rect x="15" y="2" width="1" height="1"/><rect x="18" y="2" width="1" height="1"/>
+              <rect x="10" y="4" width="1" height="1"/><rect x="13" y="4" width="1" height="1"/><rect x="16" y="4" width="1" height="1"/><rect x="19" y="4" width="1" height="1"/>
+              <rect x="11" y="6" width="1" height="1"/><rect x="14" y="6" width="1" height="1"/><rect x="17" y="6" width="1" height="1"/>
+              <rect x="2" y="10" width="1" height="1"/><rect x="4" y="10" width="1" height="1"/><rect x="6" y="10" width="1" height="1"/><rect x="9" y="10" width="1" height="1"/><rect x="11" y="10" width="1" height="1"/><rect x="14" y="10" width="1" height="1"/><rect x="17" y="10" width="1" height="1"/><rect x="20" y="10" width="1" height="1"/><rect x="22" y="10" width="1" height="1"/><rect x="25" y="10" width="1" height="1"/><rect x="27" y="10" width="1" height="1"/>
+              <rect x="3" y="12" width="1" height="1"/><rect x="7" y="12" width="1" height="1"/><rect x="10" y="12" width="1" height="1"/><rect x="13" y="12" width="1" height="1"/><rect x="16" y="12" width="1" height="1"/><rect x="19" y="12" width="1" height="1"/><rect x="24" y="12" width="1" height="1"/><rect x="26" y="12" width="1" height="1"/>
+              <rect x="2" y="14" width="1" height="1"/><rect x="5" y="14" width="1" height="1"/><rect x="8" y="14" width="1" height="1"/><rect x="12" y="14" width="1" height="1"/><rect x="14" y="14" width="1" height="1"/><rect x="18" y="14" width="1" height="1"/><rect x="21" y="14" width="1" height="1"/><rect x="23" y="14" width="1" height="1"/><rect x="27" y="14" width="1" height="1"/>
+              <rect x="4" y="16" width="1" height="1"/><rect x="6" y="16" width="1" height="1"/><rect x="9" y="16" width="1" height="1"/><rect x="11" y="16" width="1" height="1"/><rect x="15" y="16" width="1" height="1"/><rect x="17" y="16" width="1" height="1"/><rect x="20" y="16" width="1" height="1"/><rect x="22" y="16" width="1" height="1"/><rect x="25" y="16" width="1" height="1"/>
+              <rect x="3" y="18" width="1" height="1"/><rect x="7" y="18" width="1" height="1"/><rect x="10" y="18" width="1" height="1"/><rect x="13" y="18" width="1" height="1"/><rect x="16" y="18" width="1" height="1"/><rect x="19" y="18" width="1" height="1"/><rect x="23" y="18" width="1" height="1"/><rect x="26" y="18" width="1" height="1"/>
+              <rect x="11" y="20" width="1" height="1"/><rect x="14" y="20" width="1" height="1"/><rect x="17" y="20" width="1" height="1"/><rect x="20" y="20" width="1" height="1"/>
+              <rect x="10" y="22" width="1" height="1"/><rect x="13" y="22" width="1" height="1"/><rect x="16" y="22" width="1" height="1"/><rect x="19" y="22" width="1" height="1"/><rect x="22" y="22" width="1" height="1"/><rect x="25" y="22" width="1" height="1"/><rect x="27" y="22" width="1" height="1"/>
+              <rect x="11" y="24" width="1" height="1"/><rect x="14" y="24" width="1" height="1"/><rect x="18" y="24" width="1" height="1"/><rect x="21" y="24" width="1" height="1"/><rect x="24" y="24" width="1" height="1"/><rect x="26" y="24" width="1" height="1"/>
+              <rect x="10" y="26" width="1" height="1"/><rect x="13" y="26" width="1" height="1"/><rect x="16" y="26" width="1" height="1"/><rect x="20" y="26" width="1" height="1"/><rect x="23" y="26" width="1" height="1"/><rect x="27" y="26" width="1" height="1"/>
+              <rect x="12" y="27" width="1" height="1"/><rect x="15" y="27" width="1" height="1"/><rect x="18" y="27" width="1" height="1"/>
+            </g>
+          </svg>
+        </div>
+        <p class="qr-cap">
+          用手机微信扫一扫，连上后<br>
+          <span class="mute">微信就能遥控本机的 Codex。</span>
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ② 已连接·聊天 -->
+  <p class="lbl">② 已连接 · 对话</p>
+  <div class="panel">
+    <div class="bar">
+      <span class="dot on"></span>
+      <span class="name">微信 ClawBot</span>
+      <span class="spacer"></span>
+      <button class="trigger" type="button">
+        <span>连到 <span class="target">Codex</span></span>
+        <svg class="caret" viewBox="0 0 10 6"><path d="M1 1l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+    </div>
+    <div class="body">
+      <div class="chat">
+        <div class="row me">
+          <div class="bubble mine">帮我看下 server.js 第 200 行附近的 bug</div>
+        </div>
+        <div class="row">
+          <div class="av bot">CX</div>
+          <div class="bubble from">
+            第 203 行 <code>res.json()</code> 之后又走了一次 <code>next()</code>，会触发「headers already sent」。把 next 删掉：
+            <span class="code"><span class="c">// server.js:203</span>
+  res.json(data);
+<span class="k">-</span> next();</span>
+          </div>
+        </div>
+        <div class="row me">
+          <div class="bubble mine">跑一下测试</div>
+        </div>
+        <div class="row">
+          <div class="av bot">CX</div>
+          <div class="bubble from">
+            <span class="pass"><span class="ck">✓</span> 28 passed</span>　<span style="color:var(--ink2);font-family:var(--mono);font-size:12px;">in 3.4s</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ③ 大脑切换下拉展开 -->
+  <p class="lbl">③ 大脑切换 · 下拉展开</p>
+  <div class="panel dim">
+    <div class="bar menu-scene">
+      <span class="dot on"></span>
+      <span class="name">微信 ClawBot</span>
+      <span class="spacer"></span>
+      <div class="picker">
+        <button class="trigger opened" type="button">
+          <span>连到 <span class="target">Codex</span></span>
+          <svg class="caret" viewBox="0 0 10 6"><path d="M1 1l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        <div class="menu">
+          <div class="mi active">
+            <span class="check">✓</span>
+            <span class="mname">Claude&nbsp;Code</span>
+          </div>
+          <div class="mi hover">
+            <span class="check"></span>
+            <span class="mname">Codex</span>
+          </div>
+          <div class="sep"></div>
+          <div class="mi danger">
+            <span class="check"></span>
+            <span>断开连接</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="body">
+      <div class="chat">
+        <div class="row me">
+          <div class="bubble mine">跑一下测试</div>
+        </div>
+        <div class="row">
+          <div class="av bot">CX</div>
+          <div class="bubble from">
+            <span class="pass"><span class="ck">✓</span> 28 passed</span>　<span style="color:var(--ink2);font-family:var(--mono);font-size:12px;">in 3.4s</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

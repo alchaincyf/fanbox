@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1100, initial-scale=1.0">
+<title>FanBox · 微信 ClawBot · IM 版</title>
+<style>
+  :root{
+    --bg:#ece2d2;
+    --page:#d9ccb6;
+    --panel:#e7dcc9;
+    --panel-lite:#f0e7d8;
+    --ink:#4a3f30;
+    --ink-dim:#8a7d68;
+    --accent:#cc785c;
+    --line:rgba(74,63,48,.12);
+    --line-strong:rgba(74,63,48,.18);
+    --wx-green:#07C160;
+    --sans:-apple-system, BlinkMacSystemFont, system-ui, "PingFang SC", "Segoe UI", Roboto, sans-serif;
+    --mono:ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  }
+  *{margin:0;padding:0;box-sizing:border-box;}
+  html,body{background:var(--page);}
+  body{
+    font-family:var(--sans);
+    color:var(--ink);
+    -webkit-font-smoothing:antialiased;
+    padding:56px 0 72px;
+    display:flex;flex-direction:column;align-items:center;gap:48px;
+  }
+
+  /* state label above each panel */
+  .state-label{
+    width:980px;
+    font-style:italic;
+    font-size:13px;
+    color:var(--ink-dim);
+    letter-spacing:.01em;
+    margin-bottom:-30px;
+    padding-left:2px;
+  }
+  .state-label b{font-style:normal;font-weight:600;color:var(--ink);}
+
+  /* ====== the panel: a block inside the terminal, flush to window chrome ====== */
+  .panel{
+    width:980px;
+    background:var(--panel);
+    border-radius:11px;
+    box-shadow:0 1px 0 rgba(255,255,255,.5) inset, 0 14px 40px rgba(74,63,48,.10), 0 2px 6px rgba(74,63,48,.06);
+    overflow:hidden;
+    border:1px solid var(--line-strong);
+  }
+
+  /* window chrome: traffic lights, hugging top */
+  .chrome{
+    height:38px;
+    display:flex;align-items:center;
+    padding:0 15px;
+    background:var(--panel-lite);
+    border-bottom:1px solid var(--line);
+  }
+  .lights{display:flex;gap:8px;}
+  .lights i{width:12px;height:12px;border-radius:50%;display:block;}
+  .lights .r{background:#e0685f;}
+  .lights .y{background:#e3b54e;}
+  .lights .g{background:#8fc06a;}
+  .chrome-title{
+    flex:1;text-align:center;
+    font-size:12px;color:var(--ink-dim);
+    font-family:var(--mono);letter-spacing:.02em;
+    margin-right:52px;
+  }
+
+  /* ====== ONE title bar ====== */
+  .bar{
+    height:46px;
+    display:flex;align-items:center;gap:10px;
+    padding:0 18px;
+    border-bottom:1px solid var(--line);
+    position:relative;
+  }
+  .bar .name{font-size:14.5px;font-weight:600;color:var(--ink);}
+  .dot{
+    width:7px;height:7px;border-radius:50%;
+    background:var(--wx-green);
+    box-shadow:0 0 0 3px rgba(7,193,96,.14);
+    flex:0 0 7px;
+  }
+  .dot.off{background:#bcae93;box-shadow:none;}
+  .bar .spacer{flex:1;}
+
+  /* quiet dropdown trigger in the title bar */
+  .brain{
+    display:inline-flex;align-items:center;gap:6px;
+    font-size:12.5px;color:var(--ink-dim);
+    padding:5px 9px;border-radius:7px;
+    cursor:pointer;user-select:none;
+    transition:background .12s, color .12s;
+  }
+  .brain:hover{background:rgba(74,63,48,.05);color:var(--ink);}
+  .brain .caret{font-size:9px;opacity:.65;transform:translateY(1px);}
+  .brain.open{background:rgba(74,63,48,.06);color:var(--ink);}
+
+  /* dropdown menu */
+  .menu{
+    position:absolute;
+    top:42px;right:14px;
+    width:208px;
+    background:var(--panel-lite);
+    border:1px solid var(--line-strong);
+    border-radius:10px;
+    box-shadow:0 12px 32px rgba(74,63,48,.18), 0 2px 6px rgba(74,63,48,.10);
+    padding:6px;
+    z-index:5;
+  }
+  .menu .mi{
+    display:flex;align-items:center;gap:9px;
+    height:34px;padding:0 10px;border-radius:7px;
+    font-size:13px;color:var(--ink);cursor:pointer;
+  }
+  .menu .mi:hover{background:rgba(74,63,48,.06);}
+  .menu .mi.cur{background:rgba(204,120,92,.10);}
+  .menu .mi .check{margin-left:auto;color:var(--accent);font-size:12px;font-weight:700;}
+  .menu .mi.danger{color:#b15a47;}
+  .menu .sep{height:1px;background:var(--line);margin:6px 8px;}
+
+  /* ====== content area ====== */
+  .body{padding:0;}
+
+  /* --- state 1: scan QR --- */
+  .scan{
+    padding:54px 0 60px;
+    display:flex;flex-direction:column;align-items:center;
+  }
+  .qr-frame{
+    width:184px;height:184px;
+    background:var(--panel-lite);
+    border:1px solid var(--line);
+    border-radius:14px;
+    padding:16px;
+    box-shadow:0 4px 14px rgba(74,63,48,.08);
+    position:relative;
+  }
+  .qr-frame svg{display:block;width:100%;height:100%;}
+  .qr-corner{
+    position:absolute;width:26px;height:26px;
+    border:2.5px solid var(--accent);border-radius:6px;
+  }
+  .qr-corner.tl{top:-1px;left:-1px;border-right:none;border-bottom:none;}
+  .qr-corner.tr{top:-1px;right:-1px;border-left:none;border-bottom:none;}
+  .qr-corner.bl{bottom:-1px;left:-1px;border-right:none;border-top:none;}
+  .qr-corner.br{bottom:-1px;right:-1px;border-left:none;border-top:none;}
+  .scan-lead{
+    margin-top:26px;
+    font-size:14.5px;color:var(--ink);font-weight:500;
+  }
+  .scan-sub{
+    margin-top:9px;
+    font-size:13px;color:var(--ink-dim);
+    max-width:340px;text-align:center;line-height:1.6;
+  }
+
+  /* --- state 2/3: chat stream --- */
+  .chat{
+    padding:24px 26px 26px;
+    display:flex;flex-direction:column;gap:14px;
+    background:
+      radial-gradient(circle, rgba(74,63,48,.025) 1px, transparent 1px);
+    background-size:20px 20px;
+  }
+  .day{
+    align-self:center;
+    font-size:11px;color:var(--ink-dim);
+    background:rgba(74,63,48,.06);
+    padding:3px 10px;border-radius:6px;
+    margin:2px 0 6px;
+  }
+  .row{display:flex;align-items:flex-end;gap:9px;max-width:78%;}
+  .row.me{align-self:flex-end;flex-direction:row-reverse;}
+  .av{
+    width:30px;height:30px;border-radius:8px;flex:0 0 30px;
+    display:flex;align-items:center;justify-content:center;
+    font-size:12px;font-weight:700;
+  }
+  .av.bot{background:#e0d4bd;color:var(--accent);}
+  .av.me{background:var(--accent);color:#fbf3e7;}
+  .bub{
+    font-size:13.5px;line-height:1.55;
+    padding:9px 13px;
+    border-radius:13px;
+    position:relative;
+  }
+  /* bot bubble: warm light, tail bottom-left */
+  .bot .bub{
+    background:var(--panel-lite);
+    color:var(--ink);
+    border:1px solid var(--line);
+    border-bottom-left-radius:4px;
+  }
+  /* my bubble: warm terracotta tint, NOT wechat green */
+  .me .bub{
+    background:#f0d9cd;
+    color:#5a3527;
+    border:1px solid rgba(204,120,92,.22);
+    border-bottom-right-radius:4px;
+  }
+  .bub .code{
+    display:block;
+    font-family:var(--mono);font-size:12px;
+    background:rgba(74,63,48,.06);
+    border:1px solid var(--line);
+    border-radius:7px;
+    padding:8px 10px;margin-top:8px;
+    color:var(--ink);
+    white-space:pre;overflow-x:auto;
+    line-height:1.5;
+  }
+  .bub .code .cm{color:var(--ink-dim);}
+  .bub .code .kw{color:var(--accent);}
+  .pass{color:#3f8a4e;font-weight:600;}
+  .time{
+    font-size:10.5px;color:var(--ink-dim);
+    align-self:flex-end;margin:0 4px 2px;
+    flex:0 0 auto;
+  }
+  .row.me .time{order:-1;}
+
+  /* composer (muted, content-first; just to anchor the chat) */
+  .composer{
+    display:flex;align-items:center;gap:10px;
+    padding:11px 18px;
+    border-top:1px solid var(--line);
+    background:var(--panel-lite);
+  }
+  .composer .field{
+    flex:1;height:32px;
+    background:var(--panel);
+    border:1px solid var(--line);
+    border-radius:9px;
+    display:flex;align-items:center;
+    padding:0 12px;
+    font-size:13px;color:var(--ink-dim);
+  }
+  .composer .send{
+    font-size:12.5px;color:var(--accent);font-weight:600;
+    padding:6px 12px;border-radius:8px;
+  }
+</style>
+</head>
+<body>
+
+  <!-- ============ STATE 1 ============ -->
+  <div class="state-label">状态一 · <b>未连接</b>，扫码绑定</div>
+  <div class="panel">
+    <div class="chrome">
+      <div class="lights"><i class="r"></i><i class="y"></i><i class="g"></i></div>
+      <div class="chrome-title">fanbox — clawbot</div>
+    </div>
+    <div class="bar">
+      <span class="dot off"></span>
+      <span class="name">微信 ClawBot</span>
+      <span class="spacer"></span>
+      <span class="brain">连到 Codex <span class="caret">▾</span></span>
+    </div>
+    <div class="body">
+      <div class="scan">
+        <div class="qr-frame">
+          <div class="qr-corner tl"></div><div class="qr-corner tr"></div>
+          <div class="qr-corner bl"></div><div class="qr-corner br"></div>
+          <svg viewBox="0 0 29 29" shape-rendering="crispEdges">
+            <rect width="29" height="29" fill="#f0e7d8"/>
+            <g fill="#4a3f30">
+              <!-- finder TL -->
+              <path d="M0 0h7v7h-7z M1 1h5v5h-5z" fill-rule="evenodd"/>
+              <rect x="2" y="2" width="3" height="3"/>
+              <!-- finder TR -->
+              <path d="M22 0h7v7h-7z M23 1h5v5h-5z" fill-rule="evenodd"/>
+              <rect x="24" y="2" width="3" height="3"/>
+              <!-- finder BL -->
+              <path d="M0 22h7v7h-7z M1 23h5v5h-5z" fill-rule="evenodd"/>
+              <rect x="2" y="24" width="3" height="3"/>
+              <!-- timing + scattered data modules -->
+              <rect x="9" y="0" width="1" height="1"/><rect x="11" y="0" width="1" height="1"/><rect x="14" y="0" width="1" height="1"/><rect x="17" y="0" width="1" height="1"/><rect x="19" y="0" width="1" height="1"/>
+              <rect x="8" y="2" width="1" height="1"/><rect x="10" y="2" width="2" height="1"/><rect x="14" y="2" width="1" height="1"/><rect x="17" y="2" width="1" height="1"/><rect x="20" y="2" width="1" height="1"/>
+              <rect x="9" y="3" width="1" height="1"/><rect x="12" y="3" width="1" height="1"/><rect x="15" y="3" width="2" height="1"/><rect x="19" y="3" width="1" height="1"/>
+              <rect x="8" y="4" width="2" height="1"/><rect x="11" y="4" width="1" height="1"/><rect x="14" y="4" width="1" height="1"/><rect x="18" y="4" width="2" height="1"/>
+              <rect x="10" y="5" width="1" height="1"/><rect x="13" y="5" width="1" height="1"/><rect x="16" y="5" width="1" height="1"/><rect x="19" y="5" width="1" height="1"/><rect x="21" y="5" width="1" height="1"/>
+              <rect x="8" y="6" width="1" height="1"/><rect x="12" y="6" width="2" height="1"/><rect x="15" y="6" width="1" height="1"/><rect x="18" y="6" width="1" height="1"/><rect x="20" y="6" width="1" height="1"/>
+              <rect x="0" y="9" width="1" height="1"/><rect x="2" y="9" width="1" height="1"/><rect x="5" y="9" width="1" height="1"/>
+              <rect x="3" y="8" width="1" height="1"/><rect x="6" y="8" width="1" height="1"/>
+              <rect x="0" y="11" width="2" height="1"/><rect x="4" y="11" width="1" height="1"/><rect x="6" y="11" width="1" height="1"/>
+              <rect x="1" y="13" width="1" height="1"/><rect x="3" y="13" width="2" height="1"/><rect x="6" y="13" width="1" height="1"/>
+              <!-- center field -->
+              <rect x="9" y="9" width="1" height="1"/><rect x="11" y="9" width="2" height="1"/><rect x="14" y="9" width="1" height="1"/><rect x="16" y="9" width="1" height="1"/><rect x="19" y="9" width="1" height="1"/><rect x="21" y="9" width="1" height="1"/><rect x="24" y="9" width="1" height="1"/><rect x="27" y="9" width="1" height="1"/>
+              <rect x="8" y="10" width="1" height="1"/><rect x="10" y="10" width="1" height="1"/><rect x="13" y="10" width="2" height="1"/><rect x="17" y="10" width="1" height="1"/><rect x="20" y="10" width="2" height="1"/><rect x="23" y="10" width="1" height="1"/><rect x="26" y="10" width="1" height="1"/>
+              <rect x="9" y="11" width="1" height="1"/><rect x="12" y="11" width="1" height="1"/><rect x="15" y="11" width="1" height="1"/><rect x="18" y="11" width="2" height="1"/><rect x="22" y="11" width="1" height="1"/><rect x="25" y="11" width="2" height="1"/>
+              <rect x="8" y="12" width="2" height="1"/><rect x="11" y="12" width="1" height="1"/><rect x="14" y="12" width="1" height="1"/><rect x="16" y="12" width="2" height="1"/><rect x="20" y="12" width="1" height="1"/><rect x="23" y="12" width="2" height="1"/><rect x="27" y="12" width="1" height="1"/>
+              <rect x="9" y="13" width="1" height="1"/><rect x="13" y="13" width="1" height="1"/><rect x="15" y="13" width="2" height="1"/><rect x="19" y="13" width="1" height="1"/><rect x="22" y="13" width="1" height="1"/><rect x="26" y="13" width="1" height="1"/>
+              <rect x="8" y="14" width="1" height="1"/><rect x="10" y="14" width="2" height="1"/><rect x="14" y="14" width="1" height="1"/><rect x="17" y="14" width="1" height="1"/><rect x="20" y="14" width="2" height="1"/><rect x="24" y="14" width="1" height="1"/><rect x="27" y="14" width="1" height="1"/>
+              <rect x="9" y="15" width="2" height="1"/><rect x="12" y="15" width="1" height="1"/><rect x="15" y="15" width="1" height="1"/><rect x="18" y="15" width="1" height="1"/><rect x="21" y="15" width="2" height="1"/><rect x="25" y="15" width="1" height="1"/>
+              <!-- lower-right data -->
+              <rect x="8" y="17" width="1" height="1"/><rect x="11" y="17" width="2" height="1"/><rect x="14" y="17" width="1" height="1"/><rect x="16" y="17" width="1" height="1"/><rect x="19" y="17" width="1" height="1"/><rect x="22" y="17" width="2" height="1"/><rect x="26" y="17" width="1" height="1"/>
+              <rect x="9" y="18" width="1" height="1"/><rect x="13" y="18" width="1" height="1"/><rect x="17" y="18" width="2" height="1"/><rect x="20" y="18" width="1" height="1"/><rect x="24" y="18" width="1" height="1"/><rect x="27" y="18" width="1" height="1"/>
+              <rect x="8" y="19" width="2" height="1"/><rect x="12" y="19" width="1" height="1"/><rect x="15" y="19" width="1" height="1"/><rect x="18" y="19" width="1" height="1"/><rect x="21" y="19" width="2" height="1"/><rect x="25" y="19" width="1" height="1"/>
+              <rect x="10" y="20" width="1" height="1"/><rect x="13" y="20" width="2" height="1"/><rect x="16" y="20" width="1" height="1"/><rect x="19" y="20" width="1" height="1"/><rect x="23" y="20" width="1" height="1"/><rect x="26" y="20" width="1" height="1"/>
+              <rect x="9" y="21" width="1" height="1"/><rect x="11" y="21" width="1" height="1"/><rect x="14" y="21" width="1" height="1"/><rect x="17" y="21" width="2" height="1"/><rect x="20" y="21" width="1" height="1"/><rect x="24" y="21" width="2" height="1"/><rect x="27" y="21" width="1" height="1"/>
+              <rect x="9" y="23" width="1" height="1"/><rect x="11" y="23" width="2" height="1"/><rect x="14" y="23" width="1" height="1"/><rect x="16" y="23" width="1" height="1"/><rect x="19" y="23" width="1" height="1"/><rect x="22" y="23" width="1" height="1"/><rect x="25" y="23" width="2" height="1"/>
+              <rect x="8" y="24" width="1" height="1"/><rect x="10" y="24" width="1" height="1"/><rect x="13" y="24" width="1" height="1"/><rect x="17" y="24" width="2" height="1"/><rect x="21" y="24" width="1" height="1"/><rect x="24" y="24" width="1" height="1"/><rect x="27" y="24" width="1" height="1"/>
+              <rect x="9" y="25" width="2" height="1"/><rect x="12" y="25" width="1" height="1"/><rect x="15" y="25" width="2" height="1"/><rect x="18" y="25" width="1" height="1"/><rect x="20" y="25" width="1" height="1"/><rect x="23" y="25" width="2" height="1"/><rect x="26" y="25" width="1" height="1"/>
+              <rect x="8" y="26" width="1" height="1"/><rect x="11" y="26" width="1" height="1"/><rect x="14" y="26" width="1" height="1"/><rect x="16" y="26" width="1" height="1"/><rect x="19" y="26" width="2" height="1"/><rect x="22" y="26" width="1" height="1"/><rect x="25" y="26" width="1" height="1"/><rect x="27" y="26" width="1" height="1"/>
+              <rect x="10" y="27" width="1" height="1"/><rect x="12" y="27" width="2" height="1"/><rect x="15" y="27" width="1" height="1"/><rect x="18" y="27" width="1" height="1"/><rect x="21" y="27" width="1" height="1"/><rect x="24" y="27" width="2" height="1"/>
+            </g>
+          </svg>
+        </div>
+        <div class="scan-lead">用手机微信扫一扫</div>
+        <div class="scan-sub">连上后，微信就能遥控本机的 Codex —— 看代码、跑测试、改 bug，回到手机上一句话就行。</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ STATE 2 ============ -->
+  <div class="state-label">状态二 · <b>已连接</b>，对话中</div>
+  <div class="panel">
+    <div class="chrome">
+      <div class="lights"><i class="r"></i><i class="y"></i><i class="g"></i></div>
+      <div class="chrome-title">fanbox — clawbot</div>
+    </div>
+    <div class="bar">
+      <span class="dot"></span>
+      <span class="name">微信 ClawBot</span>
+      <span class="spacer"></span>
+      <span class="brain">连到 Codex <span class="caret">▾</span></span>
+    </div>
+    <div class="body">
+      <div class="chat">
+        <div class="day">今天 14:08</div>
+
+        <div class="row me">
+          <div class="av me">花</div>
+          <div class="bub">帮我看下 server.js 第 200 行附近的 bug</div>
+          <span class="time">14:08</span>
+        </div>
+
+        <div class="row bot">
+          <div class="av bot">C</div>
+          <div class="bub">找到了。第 203 行 await 漏了，Promise 没被等到就往下走了：<span class="code"><span class="cm">// 200</span>
+const u = <span class="kw">await</span> db.find(id)
+<span class="kw">if</span> (!u) <span class="kw">return</span> res.status(<span class="kw">404</span>)<span class="cm">  // ← 这里 u 一直是 pending</span></span>改成上面这样加 await 就好，要我直接改吗？</div>
+          <span class="time">14:08</span>
+        </div>
+
+        <div class="row me">
+          <div class="av me">花</div>
+          <div class="bub">改吧，然后跑一下测试</div>
+          <span class="time">14:09</span>
+        </div>
+
+        <div class="row bot">
+          <div class="av bot">C</div>
+          <div class="bub">已改并跑完：<span class="code">$ npm test
+<span class="pass">✓ 28 passed</span>  <span class="cm">(2.4s)</span></span>都过了，要不要顺手 commit？</div>
+          <span class="time">14:09</span>
+        </div>
+      </div>
+      <div class="composer">
+        <div class="field">发消息给 ClawBot…</div>
+        <span class="send">发送</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ STATE 3 ============ -->
+  <div class="state-label">状态三 · 大脑切换下拉<b> 展开</b></div>
+  <div class="panel">
+    <div class="chrome">
+      <div class="lights"><i class="r"></i><i class="y"></i><i class="g"></i></div>
+      <div class="chrome-title">fanbox — clawbot</div>
+    </div>
+    <div class="bar">
+      <span class="dot"></span>
+      <span class="name">微信 ClawBot</span>
+      <span class="spacer"></span>
+      <span class="brain open">连到 Codex <span class="caret">▴</span></span>
+      <div class="menu">
+        <div class="mi cur">Claude Code <span class="check">✓</span></div>
+        <div class="mi">Codex</div>
+        <div class="sep"></div>
+        <div class="mi danger">断开连接</div>
+      </div>
+    </div>
+    <div class="body">
+      <div class="chat">
+        <div class="day">今天 14:08</div>
+
+        <div class="row me">
+          <div class="av me">花</div>
+          <div class="bub">帮我看下 server.js 第 200 行附近的 bug</div>
+          <span class="time">14:08</span>
+        </div>
+
+        <div class="row bot">
+          <div class="av bot">C</div>
+          <div class="bub">找到了。第 203 行 await 漏了，Promise 没被等到就往下走了：<span class="code"><span class="cm">// 200</span>
+const u = <span class="kw">await</span> db.find(id)
+<span class="kw">if</span> (!u) <span class="kw">return</span> res.status(<span class="kw">404</span>)<span class="cm">  // ← 这里 u 一直是 pending</span></span>改成上面这样加 await 就好，要我直接改吗？</div>
+          <span class="time">14:08</span>
+        </div>
+
+        <div class="row me">
+          <div class="av me">花</div>
+          <div class="bub">改吧，然后跑一下测试</div>
+          <span class="time">14:09</span>
+        </div>
+
+        <div class="row bot">
+          <div class="av bot">C</div>
+          <div class="bub">已改并跑完：<span class="code">$ npm test
+<span class="pass">✓ 28 passed</span>  <span class="cm">(2.4s)</span></span>都过了，要不要顺手 commit？</div>
+          <span class="time">14:09</span>
+        </div>
+      </div>
+      <div class="composer">
+        <div class="field">发消息给 ClawBot…</div>
+        <span class="send">发送</span>
+      </div>
+    </div>
+  </div>
+
+</body>
+</html>

@@ -22,6 +22,7 @@ catch (e) { console.error('[fanbox] node-pty 未就绪（跑 npm run rebuild）�
 
 const terminals = new Map();
 const termStartCwd = new Map(); // id -> spawn 时的起始目录；Windows 无 lsof、conpty 拿不到 shell 实时 cwd，用起始目录兜底
+const termTails = new Map(); // id -> 最近输出尾巴（去 ANSI），给微信 agent 感知别的终端在跑啥/卡哪
 let win = null;
 
 // ---------- 窗口尺寸/位置记忆 ----------
@@ -86,6 +87,7 @@ app.whenReady().then(() => {
   session.defaultSession.setProxy({ mode: 'system', proxyBypassRules: 'localhost;127.0.0.1;[::1]' }).catch(() => { /* 设置失败就退回默认行为，不影响启动 */ });
   // 合盖继续运行：恢复上次的开关意图；启动时把残留的禁休眠清掉（防上次崩溃没恢复），有终端跑起来再按需重新生效
   lidIntent = !!readConfig().lidStayAwake;
+  wechatStayAwake = !!readConfig().wechatStayAwake;
   if (process.platform === 'darwin') trySetDisableSleep(false);
   buildMenu();
   try {
@@ -270,6 +272,8 @@ function writeConfig(patch) {
 }
 let lidIntent = false; // 用户意图（菜单勾选），跨会话持久
 let lidActive = false; // 当前是否已对系统下达禁休眠
+let wechatStayAwake = false; // 「离开不待机」开关（微信 ClawBot 面板），跨会话持久
+let wechatConnected = false; // 微信 ClawBot 当前是否连着（bridge 回调更新）
 
 // 用 sudo -n（非交互）切换；sudoers 没装好就直接失败、绝不在后台弹密码
 function trySetDisableSleep(on) {
@@ -308,13 +312,25 @@ function installSudoers() {
   });
 }
 
-// 按「意图 × 终端数」结算系统状态，幂等。终端起落、开关变化都调它。
+// 确保 pmset 免密规则就位（探针：设 0 无害；不行就装一次规则）。两个开关共用。
+async function ensurePmsetRule() {
+  if (process.platform !== 'darwin') return false;
+  if (trySetDisableSleep(false)) return true; // 已有免密规则
+  return installSudoers();
+}
+
+// 按「意图 × 触发条件」结算系统状态，幂等。终端起落、微信连断、开关变化都调它。
+//  两条独立诉求 OR 起来：① 合盖继续跑（要有终端在跑）② 离开不待机（微信连着就保持唤醒，断开自动恢复）
 function refreshLidGuard() {
   if (process.platform !== 'darwin') return;
-  const want = lidIntent && terminals.size > 0;
+  const want = (lidIntent && terminals.size > 0) || (wechatStayAwake && wechatConnected);
   if (want === lidActive) return;
   const ok = trySetDisableSleep(want);
-  if (want && !ok) { lidIntent = false; writeConfig({ lidStayAwake: false }); } // 免密规则丢了，退回关闭
+  if (want && !ok) { // 免密规则丢了，两个开关都退回关闭，别让用户以为还护着
+    lidIntent = false; wechatStayAwake = false;
+    writeConfig({ lidStayAwake: false, wechatStayAwake: false });
+    if (win && !win.isDestroyed()) win.webContents.send('wechat:power', { stayAwake: false, active: false });
+  }
   lidActive = want && ok;
   buildMenu();
 }
@@ -493,10 +509,16 @@ ipcMain.handle('pty:spawn', (e, { id, cwd, cols, rows, theme }) => {
   termStartCwd.set(id, startCwd);
   refreshLidGuard(); // 开关开着时，第一个终端起来即生效
   recStart(id, { cols, rows, cwd: startCwd, theme });
-  p.onData((data) => { if (win && !win.isDestroyed()) win.webContents.send('pty:data', { id, data }); recEvent(id, 'o', data); });
+  p.onData((data) => {
+    if (win && !win.isDestroyed()) win.webContents.send('pty:data', { id, data });
+    recEvent(id, 'o', data);
+    const tail = ((termTails.get(id) || '') + data.replace(/\x1b\[[0-9;?]*[A-Za-z]|\x1b[()][AB0]|\r/g, '')).slice(-4000);
+    termTails.set(id, tail); // 留最后 ~4KB，给微信 agent 看「最近输出」
+  });
   p.onExit(({ exitCode }) => {
     terminals.delete(id);
     termStartCwd.delete(id);
+    termTails.delete(id);
     refreshLidGuard(); // 最后一个终端退出即恢复休眠
     recStop(id);
     if (win && !win.isDestroyed()) win.webContents.send('pty:exit', { id, exitCode });
@@ -734,23 +756,29 @@ function decodeLsofPath(s) {
   }
   return Buffer.from(bytes).toString('utf8');
 }
-// 取某终端 shell 的真实当前目录（用 lsof 查 pty 子进程的 cwd），实现「定位到终端目录」
-ipcMain.handle('pty:cwd', (e, { id }) => new Promise((resolve) => {
-  const p = terminals.get(id);
-  if (!p || !p.pid) return resolve({ ok: false });
-  // Windows 没有 lsof，conpty 也拿不到 shell 子进程的实时 cwd：退回 spawn 起始目录。
-  // 点标签「定位到终端目录」会落在初始项目目录（用户多在项目根开 tab，多数场景正确）。
-  if (process.platform === 'win32') {
-    const cwd = termStartCwd.get(id);
-    return resolve(cwd ? { ok: true, cwd } : { ok: false });
-  }
-  const { exec } = require('child_process');
-  exec(`lsof -a -p ${p.pid} -d cwd -Fn`, { env: { ...process.env, LC_ALL: 'en_US.UTF-8' } }, (err, stdout) => {
-    if (err) return resolve({ ok: false });
-    const line = stdout.split('\n').find((l) => l.startsWith('n'));
-    resolve(line ? { ok: true, cwd: decodeLsofPath(line.slice(1)) } : { ok: false });
+// 取某终端 shell 的真实当前目录（用 lsof 查 pty 子进程的 cwd）
+function termCwdByPid(pid) {
+  return new Promise((resolve) => {
+    if (!pid) return resolve('');
+    require('child_process').exec(`lsof -a -p ${pid} -d cwd -Fn`, { env: { ...process.env, LC_ALL: 'en_US.UTF-8' }, timeout: 3000 }, (err, stdout) => {
+      if (err) return resolve('');
+      const line = (stdout || '').split('\n').find((l) => l.startsWith('n'));
+      resolve(line ? decodeLsofPath(line.slice(1)) : '');
+    });
   });
-}));
+}
+// 取某终端 shell 的真实当前目录，实现「定位到终端目录」
+ipcMain.handle('pty:cwd', async (e, { id }) => {
+  const p = terminals.get(id);
+  if (!p || !p.pid) return { ok: false };
+  // Windows 没有 lsof，conpty 拿不到 shell 实时 cwd：退回 spawn 起始目录
+  if (process.platform === 'win32') {
+    const c = termStartCwd.get(id);
+    return c ? { ok: true, cwd: c } : { ok: false };
+  }
+  const cwd = await termCwdByPid(p.pid);
+  return cwd ? { ok: true, cwd } : { ok: false };
+});
 
 // 取终端前台进程名（node-pty 维护）：判断当前是裸 shell 还是正跑着 claude/codex 等程序
 ipcMain.handle('pty:proc', (e, { id }) => {
@@ -758,129 +786,73 @@ ipcMain.handle('pty:proc', (e, { id }) => {
   return p ? { ok: true, proc: p.process || '' } : { ok: false };
 });
 
-// ---------- 微信 ClawBot：微信 →（官方插件）→ OpenClaw →（runtime）→ Claude Code / Codex ----------
-// GUI 启动的 app 只继承精简 PATH，openclaw 在 ~/.npm-global/bin 等处会找不到 → 一律走 login shell（zsh -lc）带全 PATH。
-const wxLoginShell = () => process.env.SHELL || (process.platform === 'win32' ? 'powershell.exe' : '/bin/zsh');
-function ocEnv() {
-  const env = { ...process.env };
-  if (!/UTF-8/i.test(env.LC_ALL || env.LC_CTYPE || env.LANG || '')) env.LANG = 'en_US.UTF-8';
-  return env;
-}
-// 跑一条 openclaw 命令，拿 stdout（login shell 带全 PATH）
-function ocRun(cmd, timeout = 20000) {
-  return new Promise((resolve) => {
-    const { execFile } = require('child_process');
-    execFile(wxLoginShell(), ['-lc', cmd], { env: ocEnv(), timeout, maxBuffer: 8 * 1024 * 1024 }, (err, stdout, stderr) => {
-      resolve({ ok: !err, stdout: stdout || '', stderr: stderr || '' });
-    });
-  });
-}
-const wxAccountsFile = () => path.join(os.homedir(), '.openclaw', 'openclaw-weixin', 'accounts.json');
-const ocSessionsDir = () => path.join(os.homedir(), '.openclaw', 'agents', 'main', 'sessions');
-function wxAccount() {
-  try { const a = JSON.parse(fs.readFileSync(wxAccountsFile(), 'utf8')); if (Array.isArray(a) && a.length) return a[0]; } catch { /* 没绑过 */ }
-  return '';
-}
-let wxLogin = null; // 等待扫码的登录子进程
-
-// 环境/连接状态：装没装 openclaw、有没有绑过微信、main agent 现在是哪个模型（= 微信连的是谁）
-ipcMain.handle('wechat:env', async () => {
-  const which = await ocRun('command -v openclaw || true', 8000);
-  const installed = !!which.stdout.trim();
-  let agentModel = '';
-  if (installed) agentModel = (await ocRun('openclaw config get agents.defaults.model.primary 2>/dev/null || true', 8000)).stdout.trim();
-  const account = wxAccount();
-  return { ok: true, installed, connected: !!account, account, agentModel };
-});
-
-// 启用插件 → 起网关 → 流式跑 login：二维码 URL、连接成功都通过事件推给前端
-ipcMain.handle('wechat:login', async () => {
-  const which = await ocRun('command -v openclaw || true', 8000);
-  if (!which.stdout.trim()) return { ok: false, error: 'openclaw 未安装' };
-  if (wxLogin) { try { wxLogin.kill(); } catch { /* */ } wxLogin = null; }
-  await ocRun('openclaw config set plugins.entries.openclaw-weixin.enabled true', 20000); // 幂等
-  await ocRun('openclaw gateway start', 30000); // 幂等，已在跑也无妨
-  const { spawn } = require('child_process');
-  const p = spawn(wxLoginShell(), ['-lc', 'openclaw channels login --channel openclaw-weixin'], { env: ocEnv() });
-  wxLogin = p;
-  let buf = '', qrSent = false, done = false;
-  const send = (ch, m) => { if (win && !win.isDestroyed()) win.webContents.send(ch, m); };
-  const QRCode = require('qrcode');
-  const onChunk = async (d) => {
-    buf += d.toString('utf8');
-    if (!qrSent) {
-      const m = buf.match(/https:\/\/liteapp\.weixin\.qq\.com\/\S+/);
-      if (m) {
-        qrSent = true;
-        let dataUrl = '';
-        try { dataUrl = await QRCode.toDataURL(m[0], { width: 240, margin: 1 }); } catch { /* 退回给前端原始 URL */ }
-        send('wechat:qr', { url: m[0], dataUrl });
+// ---------- 微信 ClawBot：不经 openclaw，直连腾讯 iLink 协议 + 本机 claude/codex 无头实例 ----------
+// 编排见 electron/wechat/bridge.js（iLink 客户端 ilink.js + 本机 CLI 驱动 driver.js）。
+// 参考的开源项目与署名见 docs/08-微信ClawBot-参考与署名.md。
+const wechatBridge = require('./wechat/bridge');
+let wechatInited = false;
+function ensureWechat() {
+  if (wechatInited) return;
+  wechatInited = true;
+  // 微信连/断 → 更新电源守卫（开了「离开不待机」时，连着才保持唤醒，断开自动恢复休眠）
+  wechatBridge.onConnChange = (on) => { wechatConnected = !!on; refreshLidGuard(); };
+  // 跨终端感知 + 控制：把本机其他 pty 终端的状态/写入能力交给微信 agent（手机上看电脑在跑啥、并能遥控）
+  wechatBridge.termControl = {
+    async list() {
+      const arr = [];
+      for (const [id, p] of terminals) {
+        const proc = (p && p.process) || '';
+        const cwd = await termCwdByPid(p && p.pid);
+        const busy = !!proc && !/^-?(zsh|bash|sh|fish|login)$/i.test(proc); // 前台不是裸 shell = 正跑着东西
+        arr.push({ id, cwd, name: cwd ? path.basename(cwd) : '', proc, busy, tail: termTails.get(id) || '' });
       }
-    }
-    if (!done && /已将此\s*OpenClaw\s*连接到微信|connected this OpenClaw to (WeChat|Weixin)/i.test(buf)) {
-      done = true;
-      // 登录存了凭证但运行中的网关不会热加载新 channel，必须重启才激活；restart 用 launchctl 会 I/O error，改 stop→start
-      await ocRun('openclaw gateway stop', 30000);
-      await ocRun('openclaw gateway start', 30000);
-      send('wechat:connected', { ok: true, account: wxAccount() });
-    }
+      return arr;
+    },
+    send(id, text) {
+      const p = terminals.get(id);
+      if (!p) return { ok: false, error: 'no such terminal' };
+      try { p.write(text); recEvent(id, 'i', text); return { ok: true }; }
+      catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+    },
   };
-  p.stdout.on('data', onChunk);
-  p.stderr.on('data', onChunk);
-  p.on('exit', () => { if (wxLogin === p) wxLogin = null; });
-  return { ok: true };
-});
+  try { wechatBridge.init(win); } catch (e) { console.error('[wechat] init failed', e); }
+  try { wechatConnected = wechatBridge.isConnected(); refreshLidGuard(); } catch { /* */ }
+}
+ipcMain.handle('wechat:env', async () => { ensureWechat(); return wechatBridge.env(); });
+ipcMain.handle('wechat:setTarget', (e, { target } = {}) => { ensureWechat(); return wechatBridge.setTarget(target); });
+ipcMain.handle('wechat:setCwd', (e, { dir } = {}) => { ensureWechat(); return wechatBridge.setCwd(dir); });
+ipcMain.handle('wechat:setPersona', (e, { persona } = {}) => { ensureWechat(); return wechatBridge.setPersona(persona); });
+ipcMain.handle('wechat:send', async (e, { text } = {}) => { ensureWechat(); return wechatBridge.sendDesktop(text); });
+ipcMain.handle('wechat:conversation', (e, { id } = {}) => { ensureWechat(); return wechatBridge.conversation(id); });
+ipcMain.handle('wechat:newConversation', async (e, { id } = {}) => { ensureWechat(); return wechatBridge.newConversation(id); });
+ipcMain.handle('wechat:compact', async (e, { id } = {}) => { ensureWechat(); return wechatBridge.compact(id, false); });
+ipcMain.handle('wechat:login', async () => { ensureWechat(); return wechatBridge.login(); });
+ipcMain.handle('wechat:disconnect', async () => { ensureWechat(); return wechatBridge.disconnect(); });
+ipcMain.handle('wechat:cancel', () => ({ ok: true }));
+ipcMain.handle('wechat:check', async () => { ensureWechat(); return wechatBridge.check(); }); // 主动探活，返回 { state }
 
-// 关弹窗时若还在等扫码，停掉登录进程（避免悬挂）
-ipcMain.handle('wechat:cancel', () => {
-  if (wxLogin) { try { wxLogin.kill(); } catch { /* */ } wxLogin = null; }
-  return { ok: true };
-});
-
-// 断开：登出微信 channel
-ipcMain.handle('wechat:disconnect', async () => {
-  if (wxLogin) { try { wxLogin.kill(); } catch { /* */ } wxLogin = null; }
-  const acc = wxAccount();
-  const r = await ocRun(`openclaw channels logout --channel openclaw-weixin${acc ? ` --account ${acc}` : ''}`, 30000);
-  return { ok: r.ok, error: r.stderr };
-});
-
-// 列出微信来的会话（sessions list 里筛 openclaw-weixin + @im.wechat，取 session id）
-ipcMain.handle('wechat:sessions', async () => {
-  const r = await ocRun('openclaw sessions list', 20000);
-  const items = [];
-  for (const line of (r.stdout || '').split('\n')) {
-    if (!/openclaw-weixin/.test(line) || !/@im\.wechat/.test(line)) continue;
-    const id = (line.match(/id:([0-9a-fA-F-]{36})/) || [])[1];
-    const age = (line.match(/(\d+\s*\w+ ago)/) || [])[1] || '';
-    if (id) items.push({ id, age });
+// 「离开不待机」开关：开启时（首次需管理员密码装免密规则）+ 微信连着 → 禁休眠，息屏/合盖也能远程操控
+ipcMain.handle('wechat:setStayAwake', async (e, { on } = {}) => {
+  ensureWechat();
+  if (process.platform !== 'darwin') return { ok: false, error: 'macOS only' };
+  if (on) {
+    const choice = dialog.showMessageBoxSync(win && !win.isDestroyed() ? win : undefined, {
+      type: 'warning', buttons: [M('开启', 'Enable'), M('取消', 'Cancel')], defaultId: 0, cancelId: 1,
+      message: M('离开电脑也能用微信遥控', 'Keep controllable via WeChat while away'),
+      detail: M('开启后，只要微信 ClawBot 还连着，合盖 / 息屏也不休眠——你能一直用手机微信遥控本机的 Claude Code / Codex。\n\n注意：持续耗电发热，建议接电源。断开微信、或关掉这个开关，自动恢复正常休眠。\n\n首次开启需输入一次管理员密码（装一条仅限电源设置的免密规则）。',
+        'While WeChat ClawBot stays connected, closing the lid / screen off won\'t sleep the Mac — you can keep remote-controlling Claude Code / Codex from your phone.\n\nNote: it keeps drawing power and heat; stay plugged in. Disconnecting WeChat or turning this off restores normal sleep.\n\nFirst time needs your admin password once (installs a power-only passwordless rule).'),
+    });
+    if (choice !== 0) return { ok: false, error: 'cancelled', on: wechatStayAwake };
+    const ruleOk = await ensurePmsetRule();
+    if (!ruleOk) return { ok: false, error: 'setup-cancelled', on: wechatStayAwake };
   }
-  return { ok: true, items };
+  wechatStayAwake = !!on;
+  writeConfig({ wechatStayAwake });
+  try { wechatConnected = wechatBridge.isConnected(); } catch { /* */ }
+  refreshLidGuard();
+  return { ok: true, on: wechatStayAwake, active: lidActive, connected: wechatConnected };
 });
-
-// 读对话正文：解析 transcript JSONL，取 user / assistant 的可读文本（跳过 toolCall / toolResult 噪声）
-ipcMain.handle('wechat:transcript', (e, { sid }) => {
-  if (!/^[0-9a-fA-F-]{36}$/.test(sid || '')) return { ok: false, error: 'bad sid' };
-  let txt;
-  try { txt = fs.readFileSync(path.join(ocSessionsDir(), sid + '.jsonl'), 'utf8'); }
-  catch { return { ok: false, error: 'no transcript' }; }
-  const msgs = [];
-  for (const line of txt.split('\n')) {
-    if (!line.trim()) continue;
-    let o; try { o = JSON.parse(line); } catch { continue; }
-    if (o.type !== 'message' || !o.message) continue;
-    const role = o.message.role;
-    if (role !== 'user' && role !== 'assistant') continue;
-    const c = o.message.content;
-    let text = '';
-    if (typeof c === 'string') text = c;
-    else if (Array.isArray(c)) text = c.filter((b) => b && b.type === 'text' && b.text).map((b) => b.text).join('\n').trim();
-    if (!text) continue; // 纯工具调用的 assistant 轮不显示
-    if (role === 'user' && /^Delivery:\s/.test(text)) continue; // 投递框架注入的系统指令，不是用户说的话
-    msgs.push({ role, text, time: o.timestamp || '' });
-  }
-  return { ok: true, msgs };
-});
+ipcMain.handle('wechat:powerState', () => ({ ok: true, stayAwake: wechatStayAwake, active: lidActive, platform: process.platform }));
 
 // ---------- 文件监听（agent 改文件 → 自动刷新 + 跨项目变更收件箱）----------
 // 多目录监听：浏览目录 + 每个终端会话所在的项目目录。一下午开多个项目跑 agent 时，

@@ -766,33 +766,118 @@ kbd {
 .input-actions button:hover { color: var(--text); border-color: var(--accent); }
 .input-actions button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
 
-/* ---------- 微信 ClawBot 入口 ---------- */
+/* ---------- 微信 ClawBot：终端内的一小块，IM 风格（设计方向 A）。盖住终端正文，term-head 保留可点 ---------- */
+.wechat-view { position: absolute; top: 34px; left: 0; right: 0; bottom: 0; z-index: 8; background: var(--bg); display: flex; flex-direction: column; min-height: 0; }
+.wechat-view.hidden { display: none; }
+/* 一条标题栏 */
+.wx-bar { position: relative; height: 46px; flex: 0 0 auto; display: flex; align-items: center; gap: 9px; padding: 0 8px 0 16px; border-bottom: 1px solid var(--border); background: var(--bg-2); }
+.wx-dot { width: 7px; height: 7px; border-radius: 50%; background: #07C160; box-shadow: 0 0 0 3px rgba(7,193,96,.14); flex: 0 0 7px; }
+.wx-dot.off { background: var(--text-dim); box-shadow: none; opacity: .55; }
+.wx-dot.checking { background: #e0a52e; box-shadow: 0 0 0 3px rgba(224,165,46,.16); animation: wxPulse 1s ease-in-out infinite; }
+.wx-dot.bad { background: #e5484d; box-shadow: 0 0 0 3px rgba(229,72,77,.16); }
+@keyframes wxPulse { 50% { opacity: .35; } }
+.wx-name { font-size: 14px; font-weight: 600; color: var(--text); }
+.wx-status { font-size: 11.5px; color: var(--text-dim); white-space: nowrap; }
+.wx-dot.bad ~ .wx-status, .wx-status.bad { color: #e5484d; }
+/* 离开不待机：一键开关，开启后微信连着也不休眠 */
+.wx-awake { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--text-dim); background: transparent; border: 1px solid var(--border); padding: 4px 10px; border-radius: 99px; cursor: pointer; white-space: nowrap; }
+.wx-awake:hover { background: var(--bg-3); color: var(--text); }
+.wx-awake.on { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, transparent); background: var(--accent-soft); font-weight: 600; }
+.wx-awake.hidden { display: none; }
+/* 连接失效 / 未连 → 醒目重连横幅，直接弹二维码重扫 */
+.wx-reconnect { flex: 0 0 auto; display: flex; align-items: center; gap: 10px; padding: 9px 16px; background: color-mix(in srgb, #e5484d 9%, var(--bg-2)); border-bottom: 1px solid color-mix(in srgb, #e5484d 22%, var(--border)); }
+.wx-reconnect.hidden { display: none; }
+.wx-reconnect-msg { font-size: 12.5px; color: #c2342f; font-weight: 500; }
+.wx-reconnect-btn { flex: 0 0 auto; font-size: 12.5px; font-weight: 600; color: #fff; background: #e5484d; border: 0; padding: 6px 14px; border-radius: 7px; cursor: pointer; }
+.wx-reconnect-btn:hover { background: #d13b40; }
+.wx-spacer { flex: 1; }
+/* 安静的大脑下拉触发器 */
+.wx-brain { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--text-dim); padding: 5px 9px; border-radius: 7px; cursor: pointer; user-select: none; white-space: nowrap; }
+.wx-brain:hover, .wx-brain.open { background: var(--bg-3); color: var(--text); }
+.wx-brain .caret { font-size: 9px; opacity: .65; }
+.wx-x { width: 26px; height: 26px; display: flex; align-items: center; justify-content: center; border: 0; background: transparent; color: var(--text-dim); border-radius: 6px; cursor: pointer; font-size: 14px; }
+.wx-x:hover { background: var(--bg-3); color: var(--text); }
+/* 下拉菜单 */
+.wx-menu { position: absolute; top: 42px; right: 38px; width: 204px; background: var(--bg-2); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow); padding: 6px; z-index: 6; }
+.wx-menu.hidden { display: none; }
+.wx-mi { display: flex; align-items: center; gap: 9px; height: 34px; padding: 0 10px; border-radius: 7px; font-size: 13px; color: var(--text); cursor: pointer; }
+.wx-mi:hover { background: var(--bg-3); }
+.wx-mi.cur { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.wx-mi[disabled] { opacity: .4; cursor: not-allowed; }
+.wx-mi .ck { margin-left: auto; color: var(--accent); font-weight: 700; }
+.wx-mi.danger { color: #c2603f; }
+.wx-sep { height: 1px; background: var(--border); margin: 6px 8px; }
+/* 内容区 */
+.wx-body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; position: relative; }
+.wx-chat { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 13px; padding: 20px 22px; }
+.wx-empty { margin: auto; text-align: center; color: var(--text-dim); font-size: 13px; line-height: 1.75; max-width: 330px; }
+.wx-row { display: flex; align-items: flex-end; gap: 9px; max-width: 80%; }
+.wx-row.me { align-self: flex-end; flex-direction: row-reverse; }
+.wx-row.bot { align-self: flex-start; }
+.wx-av { width: 28px; height: 28px; border-radius: 8px; flex: 0 0 28px; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; }
+.wx-av.bot { background: var(--bg-3); color: var(--accent); }
+.wx-av.me { background: var(--accent); color: var(--accent-ink); }
+.wx-bub { font-size: 13.5px; line-height: 1.55; padding: 9px 13px; border-radius: 13px; white-space: pre-wrap; word-break: break-word; }
+.wx-row.bot .wx-bub { background: var(--bg-2); color: var(--text); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
+.wx-row.me .wx-bub { background: color-mix(in srgb, var(--accent) 22%, var(--bg-2)); color: var(--text); border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent); border-bottom-right-radius: 4px; }
+.wx-bub.think { color: var(--text-dim); font-style: italic; }
+/* bot 气泡里的 markdown：紧凑排版，别把聊天撑散 */
+.wx-bub.md { white-space: normal; }
+.wx-bub.md > :first-child { margin-top: 0; }
+.wx-bub.md > :last-child { margin-bottom: 0; }
+.wx-bub.md p { margin: 6px 0; }
+.wx-bub.md ul, .wx-bub.md ol { margin: 6px 0; padding-left: 20px; }
+.wx-bub.md li { margin: 2px 0; }
+.wx-bub.md h1, .wx-bub.md h2, .wx-bub.md h3, .wx-bub.md h4 { margin: 8px 0 4px; font-size: 14.5px; }
+.wx-bub.md code { background: var(--bg-3); padding: 1px 5px; border-radius: 4px; font-size: 12.5px; }
+.wx-bub.md pre { background: var(--bg-3); padding: 9px 11px; border-radius: 8px; overflow-x: auto; margin: 6px 0; }
+.wx-bub.md pre code { background: none; padding: 0; }
+.wx-bub.md a { color: var(--accent); }
+.wx-bub.md blockquote { margin: 6px 0; padding-left: 10px; border-left: 3px solid var(--border); color: var(--text-dim); }
+.wx-bub.md table { border-collapse: collapse; margin: 6px 0; }
+.wx-bub.md th, .wx-bub.md td { border: 1px solid var(--border); padding: 3px 8px; }
+/* 用户发来的图片：气泡里直接显示原图（点击放大），不再只给「（图片）」文字 */
+.wx-img { display: block; max-width: 220px; max-height: 260px; border-radius: 9px; cursor: zoom-in; object-fit: cover; }
+.wx-img + .wx-img { margin-top: 6px; }
+.wx-cap { margin-top: 6px; }
+/* 上下文控制栏：token 进度条 + 整理/新对话 */
+.wx-ctx { display: flex; align-items: center; gap: 8px; padding: 5px 12px; border-bottom: 1px solid var(--border); background: var(--bg-1); flex-shrink: 0; }
+.wx-meter { width: 64px; height: 5px; border-radius: 3px; background: var(--bg-3); overflow: hidden; flex-shrink: 0; }
+.wx-meter-fill { display: block; height: 100%; width: 0; border-radius: 3px; background: var(--accent); transition: width .4s ease; }
+.wx-meter-fill.hot { background: #e0533b; }
+.wx-meter-txt { font-size: 11px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.wx-ctx-btn { font-size: 12px; padding: 3px 10px; border-radius: 7px; border: 1px solid var(--border); background: var(--bg-2); color: var(--text-dim); cursor: pointer; }
+.wx-ctx-btn:hover:not(:disabled) { color: var(--text); border-color: var(--accent); }
+.wx-ctx-btn:disabled { opacity: .55; cursor: default; }
+/* 系统提示 / 分隔线：居中浅色一行 */
+.wx-sys { text-align: center; font-size: 11.5px; color: var(--text-dim); margin: 10px 0; }
+/* 扫码卡：点「连接手机微信」时覆盖在聊天上 */
+.wx-scan { position: absolute; inset: 0; background: var(--bg); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; z-index: 4; }
+.wx-scan.hidden { display: none; }
+.wx-qr { width: 200px; height: 200px; background: #fff; border-radius: 14px; padding: 12px; box-shadow: 0 4px 14px rgba(0,0,0,.12); display: flex; align-items: center; justify-content: center; }
+.wx-qr img { width: 100%; height: 100%; display: block; }
+.wx-qr .wx-loading { color: #8a7d68; font-size: 12px; }
+.wx-scan-lead { font-size: 14px; font-weight: 500; color: var(--text); }
+.wx-scan-sub { font-size: 12.5px; color: var(--text-dim); max-width: 330px; text-align: center; line-height: 1.6; }
+.wx-scan-close { font-size: 12.5px; color: var(--text-dim); cursor: pointer; padding: 4px 10px; border-radius: 6px; }
+.wx-scan-close:hover { color: var(--text); background: var(--bg-3); }
+/* 自定义人格编辑面板（复用 scan 覆盖层） */
+.wx-persona { width: 460px; max-width: 86%; display: flex; flex-direction: column; gap: 8px; }
+.wx-persona-title { font-size: 14px; font-weight: 600; color: var(--text); }
+.wx-persona-sub { font-size: 12px; color: var(--text-dim); line-height: 1.5; }
+.wx-persona-ta { width: 100%; background: var(--bg-2); border: 1px solid var(--border); border-radius: 9px; padding: 10px 12px; font-size: 13px; line-height: 1.6; color: var(--text); font-family: inherit; resize: vertical; outline: none; }
+.wx-persona-ta:focus { border-color: var(--accent); }
+.wx-persona-btns { display: flex; align-items: center; gap: 6px; }
+/* 只读提示条（面板仅查看，不能从 fanbox 发送） */
+.wx-viewonly { flex: 0 0 auto; text-align: center; padding: 9px 12px; border-top: 1px solid var(--border); background: var(--bg-2); font-size: 12px; color: var(--text-faint); }
+.wx-send { font-size: 12.5px; color: var(--accent); font-weight: 600; padding: 7px 14px; border-radius: 8px; cursor: pointer; border: 0; background: transparent; }
+.wx-send:hover:not(:disabled) { background: var(--bg-3); }
+.wx-send:disabled { opacity: .4; cursor: default; }
+/* term-head 里的微信按钮：连上后点亮绿点 */
 .wechat-btn { position: relative; }
-.wechat-btn svg { display: block; }
-.wechat-btn:hover { border-color: #07C160; }
-.wechat-dot { position: absolute; top: 2px; right: 2px; width: 7px; height: 7px; border-radius: 50%; background: #07C160; box-shadow: 0 0 0 2px var(--bg-3); }
+.term-actions .wechat-btn.on { color: #07C160; }
+.wechat-dot { position: absolute; top: 1px; right: 1px; width: 6px; height: 6px; border-radius: 50%; background: #07C160; box-shadow: 0 0 0 1.5px var(--bg-2); }
 .wechat-dot.hidden { display: none; }
-.wechat-dialog { width: 380px; }
-.wechat-dialog .wx-sub { font-size: 11px; font-weight: 400; color: var(--text-dim); margin-left: 6px; }
-.wx-body { min-height: 300px; display: flex; flex-direction: column; }
-.wx-loading, .wx-hint { color: var(--text-dim); font-size: 12px; line-height: 1.6; text-align: center; }
-.wx-hint { margin: 10px 0 0; }
-.wx-step { display: flex; flex-direction: column; gap: 12px; align-items: stretch; padding: 8px 0; }
-.wx-step p { margin: 0; font-size: 13px; color: var(--text); }
-.wx-cmd { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; font-family: var(--font-mono, monospace); font-size: 13px; color: var(--accent); user-select: all; }
-.wx-step .primary { align-self: flex-start; padding: 7px 16px; border-radius: var(--radius); cursor: pointer; font-size: 13px; border: 1px solid var(--accent); background: var(--accent); color: var(--accent-ink); font-weight: 600; }
-.wx-scan { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; }
-.wx-qr { width: 240px; height: 240px; display: flex; align-items: center; justify-content: center; background: #fff; border-radius: 12px; overflow: hidden; }
-.wx-qr-img { width: 240px; height: 240px; display: block; }
-.wx-conn { flex: 1; display: flex; flex-direction: column; min-height: 0; }
-.wx-conn-bar { display: flex; align-items: center; gap: 8px; padding-bottom: 10px; border-bottom: 1px solid var(--border); margin-bottom: 10px; }
-.wx-on { color: #07C160; font-size: 12px; font-weight: 600; }
-.wx-who { color: var(--text-dim); font-size: 12px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.wx-sm { padding: 3px 10px !important; font-size: 12px; }
-.wx-chat { flex: 1; min-height: 0; max-height: 46vh; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding: 2px; }
-.wx-msg { max-width: 80%; padding: 7px 11px; border-radius: 12px; font-size: 13px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
-.wx-msg.me { align-self: flex-end; background: var(--accent); color: var(--accent-ink); border-bottom-right-radius: 3px; }
-.wx-msg.bot { align-self: flex-start; background: var(--bg-3); color: var(--text); border-bottom-left-radius: 3px; }
 
 /* 右键上下文菜单 */
 .context-menu {
@@ -836,7 +921,7 @@ kbd {
 #main-body.fm-squeezed > #terminal-panel { flex: 1 1 auto !important; width: auto !important; height: auto !important; }
 
 /* 终端尺寸只由分隔条/applyDock 的内联宽高决定，flex 不增不减——打开预览等都动不了它 */
-#terminal-panel { flex: 0 0 auto; display: flex; flex-direction: column; background: var(--bg); min-height: 0; min-width: 0; }
+#terminal-panel { flex: 0 0 auto; display: flex; flex-direction: column; background: var(--bg); min-height: 0; min-width: 0; position: relative; }
 #terminal-panel.hidden { display: none; }
 #terminal-panel.term-drop { position: relative; }
 #terminal-panel.term-drop::after {
@@ -920,8 +1005,8 @@ kbd {
    全屏期间把顶栏/品牌区的拖拽关掉，让预览自己的按钮可点（全屏本就不需要拖这条顶栏）。 */
 .desktop.preview-maxed #topbar, .desktop.preview-maxed .brand { -webkit-app-region: no-drag; }
 
-/* 终端头：跟随/定位 文字按钮 */
-.term-actions #file-follow, .term-actions #term-locate { font-size: 11px; padding: 3px 8px; font-family: var(--font-ui); }
+/* 终端头：文件跟随按钮 */
+.term-actions #file-follow { font-size: 11px; padding: 3px 8px; font-family: var(--font-ui); }
 .term-actions #file-follow.on { color: var(--accent); background: var(--accent-soft); }
 .term-actions #term-max.on { color: var(--accent-ink); background: var(--accent); }
 .nav-buttons #btn-sidebar.on { color: var(--accent); border-color: var(--accent); }
@@ -938,9 +1023,9 @@ kbd {
 .desktop #topbar { background-color: var(--bg-2); }
 .desktop #sidebar { background-color: color-mix(in srgb, var(--panel) 80%, transparent); }
 
-/* 跟随/定位 改为图标+文字，覆盖前面的纯文字规则 */
-.term-actions #file-follow, .term-actions #term-locate { display: inline-flex; align-items: center; gap: 4px; }
-.term-actions #file-follow svg, .term-actions #term-locate svg { flex-shrink: 0; }
+/* 文件跟随：纯图标按钮（文字已撤） */
+.term-actions #file-follow { display: inline-flex; align-items: center; }
+.term-actions #file-follow svg { flex-shrink: 0; }
 
 /* ---------- 文件跟随：实时徽标 + 代码流动 + html 双缓冲 ---------- */
 .live-badge { display: inline-flex; align-items: center; gap: 5px; margin-right: 8px; padding: 1px 7px; border-radius: 99px; font-size: 10px; font-weight: 700; letter-spacing: 0.5px; color: var(--accent); background: var(--accent-soft); flex-shrink: 0; }
@@ -1152,4 +1237,4 @@ body { transition: background-color 0.28s ease, color 0.28s ease; }
 .rp-export:disabled { opacity: 0.5; cursor: default; }
 /* 回放入口发现点：有录像时按钮右上角一个小红点 */
 #term-replay { position: relative; }
-#term-replay.has-rec::after { content: ''; position: absolute; top: 2px; right: 2px; width: 6px; height: 6px; border-radius: 50%; background: #e5484d; box-shadow: 0 0 0 1.5px var(--bg-2); }
+#term-replay.has-rec::after { content: ''; position: absolute; top: 3px; right: 3px; width: 5px; height: 5px; border-radius: 50%; background: #e5484d; }
