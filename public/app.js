@@ -3270,11 +3270,13 @@ const term = {
         return true;
       }
       if (cmd && (e.key === 'v' || e.key === 'V')) {
-        // ⌘V 粘贴
+        // ⌘V 粘贴：空文本也要 paste('') 发出 bracketed-paste 序列。
+        // 图片粘贴靠的是 claude 收到粘贴信号后主动读系统剪贴板取图；若这里因「无文本」
+        // 就不调 xterm.paste，终端收不到任何信号，claude 永远不会去读图 → 图片粘贴失效（#图片粘贴回归）
         e.preventDefault();
-        navigator.clipboard.readText().then(text => {
-          if (text) xterm.paste(text);
-        }).catch(() => { /* 无权限时走Electron菜单兜底 */ });
+        navigator.clipboard.readText()
+          .then(text => xterm.paste(text || ''))
+          .catch(() => xterm.paste('')); // 纯图片剪贴板 readText 会返回空/reject，同样补发空粘贴信号
         return false;
       }
       if (cmd && (e.key === '=' || e.key === '+' || e.key === '0')) {
