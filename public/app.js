@@ -3273,10 +3273,14 @@ const term = {
         // ⌘V 粘贴：空文本也要 paste('') 发出 bracketed-paste 序列。
         // 图片粘贴靠的是 claude 收到粘贴信号后主动读系统剪贴板取图；若这里因「无文本」
         // 就不调 xterm.paste，终端收不到任何信号，claude 永远不会去读图 → 图片粘贴失效（#图片粘贴回归）
+        sess._kbPasteTs = Date.now(); // 标记这次粘贴由键盘接管，供下方拦掉 xterm 原生 paste 事件，防双发（Ctrl+V 图片粘两张）
+        sess._pasteFallback = '';     // 清掉上次的兜底文本，避免陈旧误用
         e.preventDefault();
         navigator.clipboard.readText()
           .then(text => xterm.paste(text || ''))
-          .catch(() => xterm.paste('')); // 纯图片剪贴板 readText 会返回空/reject，同样补发空粘贴信号
+          // readText 无权限/非安全上下文会 reject：用原生 paste 事件抓到的 clipboardData 文本兜底，
+          // 别让这些环境下文本粘贴失效（图片剪贴板没有文本，兜底为空，仍是空信号让 claude 去读图）
+          .catch(() => xterm.paste(sess._pasteFallback || ''));
         return false;
       }
       if (cmd && (e.key === '=' || e.key === '+' || e.key === '0')) {
@@ -3292,6 +3296,22 @@ const term = {
       }
       return true;
     });
+
+    // 防双重粘贴：⌘V/Ctrl+V 已由上面的键盘处理器接管（navigator.clipboard + xterm.paste），
+    // 但 xterm 自带的原生 paste 监听会对同一次按键再发一遍 bracketed-paste，claude 便读两次剪贴板
+    //  → 图片粘两张（Cmd+V 时 preventDefault 顺带压掉了原生事件，Ctrl+V 压不住，故只有 Ctrl+V 双发）。
+    // 只吞「键盘刚接管」紧随的那一次原生 paste：一次性消费（命中即置 0），60ms 仅作兜底上限——
+    // 原生 paste 是按键默认动作、几毫秒内必到，60ms 足够拦住；而人手二次粘贴间隔 >150ms，
+    // 故即便某次没等到原生 paste（如 Cmd+V 原生事件已被 preventDefault 取消）致标记未被消费，
+    // 60ms 内也活不到下一次真实粘贴 → 不会误吞紧接着的合法粘贴。
+    // 拦掉前先把它携带的 clipboardData 文本存下：上面 readText 失败时用它兜底，保住文本粘贴不失效。
+    host.addEventListener('paste', (e) => {
+      if (Date.now() - (sess._kbPasteTs || 0) < 60) {
+        sess._kbPasteTs = 0; // 一次性：消费掉，后续粘贴（含快速再点「编辑→粘贴」）不再受这次按键影响
+        try { sess._pasteFallback = (e.clipboardData && e.clipboardData.getData('text/plain')) || ''; } catch { /* */ }
+        e.preventDefault(); e.stopImmediatePropagation();
+      }
+    }, true);
 
     // 右键菜单：复制/粘贴
     host.addEventListener('contextmenu', (e) => {
