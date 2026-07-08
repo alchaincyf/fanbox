@@ -15,6 +15,7 @@ const os = require('os');
 const crypto = require('crypto');
 const { exec, spawn, execFile } = require('child_process');
 const { URL } = require('url');
+const { createClaudeOfficialLimitsClient } = require('./lib/claude-official-limits');
 
 const HOME = os.homedir();
 const PORT = Number(process.env.FANBOX_PORT) || 4567;
@@ -23,6 +24,14 @@ const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
 const THUMB_DIR = path.join(CONFIG_DIR, 'thumbs');
 const PUBLIC = path.join(__dirname, 'public');
 const PLATFORM = process.platform;
+const claudeOfficialClient = createClaudeOfficialLimitsClient({
+  home: HOME,
+  configDir: CONFIG_DIR,
+  platform: PLATFORM,
+  execFile,
+  fsp,
+  env: process.env,
+});
 
 // 搜索 / 遍历时跳过的重目录，避免 vibe coding 项目里 node_modules 拖垮速度
 const IGNORE_DIRS = new Set([
@@ -1652,64 +1661,10 @@ async function codexUsage() {
   return null;
 }
 
-// Claude Code 官方限额窗口（和它 /usage 面板同源）：5h 滚动窗口 + 周配额的百分比和重置时间。
-// 本地 jsonl 只有 token 流水、推不出官方百分比，必须拿 Claude Code 自己的 OAuth token
-// （macOS 在 Keychain，其他平台落在 ~/.claude/.credentials.json）查官方 usage 接口。
-// 这是本服务唯一的出网请求，只发往 api.anthropic.com——Claude Code 平时也在发同一个请求。
-async function claudeOAuthToken() {
-  const pick = (raw) => {
-    const o = JSON.parse(raw).claudeAiOauth;
-    return o && o.accessToken && (!o.expiresAt || o.expiresAt > Date.now()) ? o.accessToken : null;
-  };
-  if (PLATFORM === 'darwin') {
-    try {
-      const out = await new Promise((resolve, reject) => {
-        execFile('security', ['find-generic-password', '-s', 'Claude Code-credentials', '-w'],
-          { timeout: 3000 }, (err, stdout) => (err ? reject(err) : resolve(stdout)));
-      });
-      const t = pick(out);
-      if (t) return t;
-    } catch { /* 落到凭证文件 */ }
-  }
-  try { return pick(await fsp.readFile(path.join(HOME, '.claude', '.credentials.json'), 'utf8')); }
-  catch { return null; }
-}
-
-// 终端启动时 curl 自己会认 http_proxy 等环境变量；但打包 App 从 Finder/Dock 启动没有这些变量，
-// curl 直连 api.anthropic.com 会被 403 地域拦截。此时读 macOS 系统代理（Clash 等都会写进去）兜底。
-async function curlSysProxyLine() {
-  if (['https_proxy', 'HTTPS_PROXY', 'http_proxy', 'HTTP_PROXY', 'all_proxy', 'ALL_PROXY'].some((k) => process.env[k])) return '';
-  if (PLATFORM !== 'darwin') return '';
-  try {
-    const out = await new Promise((resolve, reject) => {
-      execFile('scutil', ['--proxy'], { timeout: 3000 }, (err, stdout) => (err ? reject(err) : resolve(stdout)));
-    });
-    const grab = (k) => (out.match(new RegExp(`\\b${k} : (\\S+)`)) || [])[1];
-    if (grab('HTTPSEnable') === '1') return `proxy = "http://${grab('HTTPSProxy')}:${grab('HTTPSPort')}"\n`;
-    if (grab('HTTPEnable') === '1') return `proxy = "http://${grab('HTTPProxy')}:${grab('HTTPPort')}"\n`;
-    if (grab('SOCKSEnable') === '1') return `proxy = "socks5h://${grab('SOCKSProxy')}:${grab('SOCKSPort')}"\n`;
-  } catch { /* 读不到就直连 */ }
-  return '';
-}
-
-async function claudeOfficialLimits() {
-  const token = await claudeOAuthToken();
-  if (!token) return null;
-  // 不用 Node https：该接口的防护按 TLS 指纹拦——同样的请求头 curl 能 200、Node 直接 403。
-  // 走系统 curl（macOS/Win10+ 自带），顺带继承用户的代理环境变量；
-  // token 经 stdin 的 curl 配置传入，不暴露在进程列表里
-  const proxyLine = await curlSysProxyLine();
-  const body = await new Promise((resolve, reject) => {
-    const cp = execFile('curl', ['-sS', '--max-time', '8', '-K', '-', 'https://api.anthropic.com/api/oauth/usage'],
-      { timeout: 10000 }, (err, stdout) => (err ? reject(err) : resolve(stdout)));
-    cp.stdin.end(`${proxyLine}header = "Authorization: Bearer ${token}"\nheader = "anthropic-beta: oauth-2025-04-20"\n`);
-  });
-  const d = JSON.parse(body);
-  const win = (w) => (w && w.utilization != null)
-    ? { usedPercent: w.utilization, resetsAt: w.resets_at ? Math.floor(Date.parse(w.resets_at) / 1000) : 0 }
-    : null;
-  const fiveHour = win(d.five_hour), sevenDay = win(d.seven_day);
-  return (fiveHour || sevenDay) ? { fiveHour, sevenDay } : null;
+// Claude Code 官方限额窗口（和它 /usage 面板同源）：5h 滚动窗口 + 周配额。
+// 失败时先用真实 Claude CLI 刷新官方 OAuth 状态，仍失败则返回上次成功缓存，避免 UI 掉到 official:null。
+async function claudeOfficialLimits(force = false) {
+  return await claudeOfficialClient.fetch({ force });
 }
 
 // ---------- Agent 项目（最近被 coding agent 处理过的项目文件夹）----------
@@ -2090,14 +2045,16 @@ async function skillTrash(dir) {
   return r;
 }
 
-async function agentUsage() {
-  if (usageResultCache.data && Date.now() - usageResultCache.at < 30000) return usageResultCache.data;
+async function agentUsage(force = false) {
+  if (!force && usageResultCache.data && Date.now() - usageResultCache.at < 30000) return usageResultCache.data;
   const [claude, codex, claudeLimits] = await Promise.all([
     claudeUsage().catch(() => null),
     codexUsage().catch(() => null),
-    claudeOfficialLimits().catch(() => null),
+    claudeOfficialLimits(force).catch(() => null),
   ]);
-  const claudeOut = (claude || claudeLimits) ? { ...(claude || {}), official: claudeLimits } : null;
+  const official = claudeLimits && claudeLimits.limits ? claudeLimits.limits : null;
+  const officialMeta = claudeLimits && claudeLimits.meta ? claudeLimits.meta : null;
+  const claudeOut = (claude || official) ? { ...(claude || {}), official, officialMeta } : null;
   const data = { ok: true, at: Date.now(), claude: claudeOut, codex };
   usageResultCache = { at: Date.now(), data };
   return data;
@@ -2319,7 +2276,8 @@ const server = http.createServer(async (req, res) => {
       return sendJSON(res, 200, await skillTrash(b.dir));
     }
     if (p === '/api/agent-usage') {
-      return sendJSON(res, 200, await agentUsage());
+      const force = url.searchParams.get('force') === '1' || url.searchParams.get('refresh') === '1';
+      return sendJSON(res, 200, await agentUsage(force));
     }
     if (p === '/api/favorites') {
       if (req.method === 'POST') {
