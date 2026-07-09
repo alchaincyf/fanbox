@@ -2613,11 +2613,11 @@ function bindEvents() {
   usagePanel.bind();
   shotTray.init();
   $('#skills-entry').onclick = () => skillsView.show();
-  $('#term-newtab').onclick = () => { wechatView.close(); term.newTab(); };
+  $('#term-rail-new').onclick = () => { wechatView.close(); term.newTab(); };
   $('#term-max').onclick = () => term.toggleMax();
-  // 双击终端顶栏空白处（避开标签/按钮/输入框）= 铺满终端：agent 交互窗口最重要，给它一键放到最大
+  // 双击终端顶栏空白处（避开按钮/输入框）= 铺满终端：agent 交互窗口最重要，给它一键放到最大
   $('.term-head').addEventListener('dblclick', (ev) => {
-    if (ev.target.closest('button, .term-tab, input')) return;
+    if (ev.target.closest('button, input')) return;
     term.toggleMax();
   });
   $('#term-dock').onclick = () => term.setDock(term.dock === 'bottom' ? 'right' : 'bottom');
@@ -2629,7 +2629,7 @@ function bindEvents() {
   $('#term-close').onclick = () => term.close();
   $('#btn-sidebar').onclick = () => toggleSidebar();
   $('#file-follow').onclick = () => setFileFollow(!follow.on);
-  // 定位文件按钮已撤（双击终端 tab 即可定位，见 term.locateCwd / renderTabs 的 ondblclick）
+  // 定位文件按钮已撤（双击终端会话行即可定位，见 term.locateCwd / renderTabs 的 ondblclick）
   // 终端随窗口尺寸变化重排，避免 TUI 错位
   window.addEventListener('resize', () => term.fitActive());
   if (window.ResizeObserver) new ResizeObserver(() => term.fitActive()).observe($('#xterm-host'));
@@ -3803,22 +3803,34 @@ const term = {
     } catch { /* 通知不可用就算了 */ }
   },
   renderTabs() {
-    const bar = $('#term-tabs');
-    bar.innerHTML = '';
+    const rail = $('#term-rail-list');
+    if (!rail) return;
+    rail.innerHTML = '';
     this.sessions.forEach((s) => {
-      const t = document.createElement('div');
+      const row = document.createElement('div');
       const dotState = s.dead ? 'dead' : (s.status === 'busy' ? 'busy' : 'idle');
-      const followed = follow.on && follow.sid === s.id; // 文件跟随正盯着这个 tab
-      t.className = 'term-tab' + (s.id === this.active ? ' active' : '') + (s.unread ? ' unread' : '') + (followed ? ' following' : '');
+      const followed = follow.on && follow.sid === s.id; // 文件跟随正盯着这个终端
+      row.className = 'term-rail-row' + (s.id === this.active ? ' active' : '') + (s.unread ? ' unread' : '') + (followed ? ' following' : '');
       const dotTitle = s.dead ? '进程已退出' : (s.status === 'busy' ? 'agent 运行中' : '空闲');
       // 终端图标按项目路径染色：同项目同色，和面包屑的配对色点呼应
       const hue = this.hueOf(s.cwd || s.startDir);
-      t.title = followed ? '文件跟随正盯着这个终端 · 双击跳到它所在目录' : '双击：文件区跳到该终端所在目录';
+      row.title = followed ? '文件跟随正盯着这个终端 · 双击跳到它所在目录' : '双击：文件区跳到该终端所在目录';
       const eye = followed ? `<span class="tab-eye" title="文件跟随盯着它">${ic('eye', 'currentColor', 11)}</span>` : '';
-      t.innerHTML = `<span class="tab-dot ${dotState}" title="${dotTitle}"></span>${eye}${ic('term', `hsl(${hue} 62% 48%)`, 12)}<span>${escapeHtml(s.title)}</span><span class="tab-x" title="关闭">✕</span>`;
-      t.onclick = (e) => { if (e.target.classList.contains('tab-x')) { this.closeTab(s.id); return; } this.activate(s.id); };
-      t.ondblclick = (e) => { if (e.target.classList.contains('tab-x')) return; this.locateCwd(); };
-      bar.appendChild(t);
+      row.innerHTML = `<span class="tab-dot ${dotState}" title="${dotTitle}"></span>${eye}${ic('term', `hsl(${hue} 62% 48%)`, 12)}<span class="tab-title">${escapeHtml(s.title)}</span><span class="tab-x" title="关闭">✕</span>`;
+      const locate = () => {
+        const now = Date.now();
+        if (now - (this._lastRailLocateAt || 0) < 250) return;
+        this._lastRailLocateAt = now;
+        if (this.active !== s.id) this.activate(s.id);
+        this.locateCwd();
+      };
+      row.onclick = (e) => {
+        if (e.target.classList.contains('tab-x')) { this.closeTab(s.id); return; }
+        if (e.detail > 1) { locate(); return; }
+        this.activate(s.id);
+      };
+      row.ondblclick = (e) => { if (e.target.classList.contains('tab-x')) return; locate(); };
+      rail.appendChild(row);
     });
   },
   // 换主题后 WebGL 图集里缓存的还是旧配色字形，且 CJK 宽字符偶发图集损坏（#37/#45）：清一次图集强制重栅格化。

@@ -940,7 +940,7 @@ kbd {
 #main-body.fm-squeezed > #terminal-panel { flex: 1 1 auto !important; width: auto !important; height: auto !important; }
 
 /* 终端尺寸只由分隔条/applyDock 的内联宽高决定，flex 不增不减——打开预览等都动不了它 */
-#terminal-panel { flex: 0 0 auto; display: flex; flex-direction: column; background: var(--bg); min-height: 0; min-width: 0; position: relative; }
+#terminal-panel { flex: 0 0 auto; display: flex; flex-direction: column; background: var(--bg); min-height: 0; min-width: 0; position: relative; container-type: inline-size; }
 #terminal-panel.hidden { display: none; }
 #terminal-panel.term-drop { position: relative; }
 #terminal-panel.term-drop::after {
@@ -964,21 +964,26 @@ kbd {
 .dock-bottom #terminal-panel { width: 100%; border-top: 1px solid var(--border); }
 .dock-right #terminal-panel { height: 100%; border-left: 1px solid var(--border); }
 
-.term-head { display: flex; align-items: center; justify-content: space-between; height: 34px; padding: 0 6px 0 8px; background: var(--bg-2); border-bottom: 1px solid var(--border); flex: 0 0 auto; }
-.term-tabs { display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; }
-.term-tabs::-webkit-scrollbar { display: none; }
-.term-tab { display: flex; align-items: center; gap: 5px; padding: 3px 9px; font-size: 12px; color: var(--text-dim); border-radius: 6px; cursor: pointer; white-space: nowrap; font-family: var(--font-mono); }
-.term-tab:hover { color: var(--text); }
-.term-tab.active { background: var(--bg-3); color: var(--text); }
-.term-tab .tab-x { opacity: 0.45; margin-left: 2px; }
-.term-tab .tab-x:hover { opacity: 1; color: var(--accent); }
+.term-head { display: flex; align-items: center; justify-content: flex-end; height: 34px; padding: 0 6px 0 8px; background: var(--bg-2); border-bottom: 1px solid var(--border); flex: 0 0 auto; }
+.term-body { flex: 1; min-height: 0; min-width: 0; display: flex; }
+.term-rail { flex: 0 0 clamp(72px, 26%, 176px); display: flex; flex-direction: column; gap: 6px; min-height: 0; padding: 6px; background: var(--bg-2); border-right: 1px solid var(--border); }
+.term-rail-list { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; gap: 3px; scrollbar-width: thin; }
+.term-rail-row { display: flex; align-items: center; gap: 5px; width: 100%; min-width: 0; min-height: 28px; padding: 4px 6px; font-size: 12px; color: var(--text-dim); border-radius: 6px; cursor: pointer; white-space: nowrap; font-family: var(--font-mono); }
+.term-rail-row:hover { color: var(--text); background: color-mix(in srgb, var(--bg-3) 70%, transparent); }
+.term-rail-row.active { background: var(--bg-3); color: var(--text); }
+.term-rail-row svg { flex: none; }
+.term-rail-row .tab-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.term-rail-row .tab-x { flex: none; opacity: 0.45; margin-left: auto; padding: 0 2px; border-radius: 4px; }
+.term-rail-row .tab-x:hover { opacity: 1; color: var(--accent); background: var(--accent-soft); }
 /* agent 态势小圆点：运行中(绿/呼吸) · 空闲(灰) · 已退出(红) */
-.term-tab .tab-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--text-dim); }
-.term-tab .tab-dot.busy { background: var(--green, #3fb950); animation: tabpulse 1.1s ease-in-out infinite; }
-.term-tab .tab-dot.idle { background: var(--text-dim); opacity: 0.5; }
-.term-tab .tab-dot.dead { background: var(--accent); }
-.term-tab.unread:not(.active) { color: var(--text); }
-.term-tab.unread:not(.active) .tab-dot.idle { background: var(--accent); opacity: 1; }
+.term-rail-row .tab-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--text-dim); }
+.term-rail-row .tab-dot.busy { background: var(--green); animation: tabpulse 1.1s ease-in-out infinite; }
+.term-rail-row .tab-dot.idle { background: var(--text-dim); opacity: 0.5; }
+.term-rail-row .tab-dot.dead { background: var(--accent); }
+.term-rail-row.unread:not(.active) { color: var(--text); }
+.term-rail-row.unread:not(.active) .tab-dot.idle { background: var(--accent); opacity: 1; }
+.term-rail-new { flex: 0 0 auto; width: 100%; min-height: 29px; padding: 5px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text-dim); cursor: pointer; font-size: 12px; font-family: var(--font-ui); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.term-rail-new:hover { color: var(--text); border-color: var(--accent); background: var(--accent-soft); }
 @keyframes tabpulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 /* 变更收件箱：徽章 + 浮层面板 */
 #btn-changes { position: relative; }
@@ -1019,7 +1024,7 @@ kbd {
 .agents-pop .ap-flag { font-size: 11px; color: var(--yellow); cursor: copy; flex: none; }
 .agents-pop .ap-foot { padding: 8px 12px; font-size: 11px; color: var(--text-dim); border-top: 1px solid var(--border); line-height: 1.7; }
 
-#xterm-host { flex: 1; position: relative; min-height: 0; overflow: hidden; background: var(--bg); }
+#xterm-host { flex: 1; position: relative; min-height: 0; min-width: 160px; overflow: hidden; background: var(--bg); }
 /* xterm 6.0 的 Viewport 重写后不再用 JS 把 .xterm-viewport 刷成主题色，xterm.css 默认的 #000
    会在行区底部的余高缝隙里露出来（黑带横跳）——改透明，让容器背景（皮肤色/回放录制色）透上来 */
 .xterm .xterm-viewport { background-color: transparent !important; }
@@ -1048,7 +1053,7 @@ kbd {
 .nav-buttons #btn-sidebar.on { color: var(--accent); border-color: var(--accent); }
 
 /* ---------- 换肤平滑过渡（消除硬切撕裂）---------- */
-#sidebar, #topbar, #content, #preview, #terminal-panel, .term-head, #main {
+#sidebar, #topbar, #content, #preview, #terminal-panel, .term-head, .term-rail, #main {
   transition: background-color 0.28s ease, border-color 0.28s ease;
 }
 
@@ -1072,9 +1077,9 @@ kbd {
 .live-badge.done i { background: var(--text-dim); animation: none; }
 /* 跟随中绑定的是哪个项目/agent：徽标后跟一枚小标签 */
 .live-where { margin-right: 8px; padding: 1px 7px; border-radius: 99px; font-size: 10px; font-weight: 600; color: var(--text-dim); background: var(--bg-2); flex-shrink: 0; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* 文件跟随正盯着的终端 tab：描边高亮 + 眼睛标记 */
-.term-tab.following { box-shadow: inset 0 0 0 1px var(--accent); }
-.term-tab .tab-eye { display: inline-flex; align-items: center; color: var(--accent); margin: 0 1px; }
+/* 文件跟随正盯着的终端会话：描边高亮 + 眼睛标记 */
+.term-rail-row.following { box-shadow: inset 0 0 0 1px var(--accent); }
+.term-rail-row .tab-eye { display: inline-flex; align-items: center; color: var(--accent); margin: 0 1px; }
 /* 产物卡片：agent 编译/打包出的成品 */
 .artifact-card .art-name { font-size: 15px; font-weight: 600; color: var(--text); word-break: break-all; margin-bottom: 4px; }
 .artifact-card .art-sub { font-size: 12px; color: var(--text-faint); margin-bottom: 16px; }

@@ -115,12 +115,10 @@
         <div id="terminal-resizer" class="hidden"></div>
         <section id="terminal-panel" class="hidden">
           <header class="term-head">
-            <div class="term-tabs" id="term-tabs"></div>
             <div class="term-actions">
               <button id="agent-config" title="选择一键启动的 coding agent"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg></button>
               <button id="term-wechat" class="agent-launch wechat-btn" title="微信 ClawBot：用微信遥控本机的 Claude Code / Codex（扫码连接，可切换）"><svg width="15" height="15" viewBox="0 0 24 24" fill="#07C160"><path d="M9 3C4.86 3 1.5 5.96 1.5 9.6c0 2.06 1.08 3.9 2.78 5.1L3.4 17.4l2.96-1.5c.83.23 1.72.36 2.64.36.23 0 .46-.01.68-.03A5.7 5.7 0 0 1 9.4 14c0-3.2 3.1-5.7 6.93-5.7.27 0 .54.02.8.05C16.6 5.2 13.1 3 9 3Zm-2.6 4.5a1.02 1.02 0 1 1 0 2.04 1.02 1.02 0 0 1 0-2.04Zm5.2 0a1.02 1.02 0 1 1 0 2.04 1.02 1.02 0 0 1 0-2.04Z"/><path d="M22.5 14.1c0-2.92-2.86-5.3-6.38-5.3s-6.38 2.38-6.38 5.3 2.86 5.3 6.38 5.3c.78 0 1.53-.12 2.22-.33l2.4 1.22-.66-2.02c1.47-.98 2.4-2.42 2.4-4.17Zm-8.5-1.2a.85.85 0 1 1 0-1.7.85.85 0 0 1 0 1.7Zm4.24 0a.85.85 0 1 1 0-1.7.85.85 0 0 1 0 1.7Z"/></svg><span id="wechat-dot" class="wechat-dot hidden"></span></button>
-              <button id="file-follow" title="文件跟随：跟着当前终端 tab 的 agent，它改哪个文件，文件区和预览就跟到哪；html/md 边写边出实时预览（手动浏览即自动停）"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg></button>
-              <button id="term-newtab" title="新终端">＋</button>
+              <button id="file-follow" title="文件跟随：跟着当前终端会话的 agent，它改哪个文件，文件区和预览就跟到哪；html/md 边写边出实时预览（手动浏览即自动停）"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg></button>
               <button id="term-max" title="终端铺满"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg></button>
               <button id="term-dock" title="切换 上下 / 左右 布局">⇆</button>
               <button id="term-replay" title="终端录像回放 / 导出视频"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg></button>
@@ -128,7 +126,13 @@
               <button id="term-close" title="收起终端">✕</button>
             </div>
           </header>
-          <div id="xterm-host"></div>
+          <div class="term-body">
+            <aside class="term-rail" id="term-rail" aria-label="终端会话">
+              <button id="term-rail-new" class="term-rail-new" title="新终端">＋ 新终端</button>
+              <div class="term-rail-list" id="term-rail-list"></div>
+            </aside>
+            <div id="xterm-host"></div>
+          </div>
           <!-- 微信 ClawBot：终端内的独立界面（盖在 xterm 之上，自带标题栏 + 目标切换器） -->
           <div id="wechat-view" class="wechat-view hidden"></div>
         </section>
