@@ -75,7 +75,72 @@ test('limits returns stale cache when live usage fails after isolated refresh', 
   assert.equal(result.meta.stale, true);
   const refresh = calls.find((c) => c.cmd.endsWith('/claude'));
   assert.ok(refresh);
-  assert.deepEqual(refresh.args, ['auth', 'status']);
+  assert.deepEqual(refresh.args.slice(0, 6), ['-p', '--no-session-persistence', '--safe-mode', '--tools', '', '--model']);
+  assert.equal(refresh.env.ANTHROPIC_BASE_URL, undefined);
+  assert.equal(refresh.env.ANTHROPIC_AUTH_TOKEN, undefined);
+});
+
+test('expired oauth token is refreshed with a minimal official Claude request before fetching usage', async () => {
+  const calls = [];
+  let securityReads = 0;
+  const expiredCredential = {
+    claudeAiOauth: {
+      accessToken: 'expired-access',
+      refreshToken: 'refresh-token',
+      expiresAt: 1783000000000,
+    },
+  };
+  const refreshedCredential = {
+    claudeAiOauth: {
+      accessToken: 'fresh-access',
+      refreshToken: 'refresh-token',
+      expiresAt: 1783007200000,
+    },
+  };
+  const fakeFsp = {
+    readFile: async () => { throw Object.assign(new Error('missing'), { code: 'ENOENT' }); },
+    writeFile: async () => {},
+    mkdir: async () => {},
+  };
+  const fakeExecFile = (cmd, args, options, cb) => {
+    calls.push({ cmd, args, env: options.env });
+    if (cmd === 'security') {
+      securityReads++;
+      return cb(null, JSON.stringify(securityReads === 1 ? expiredCredential : refreshedCredential));
+    }
+    if (cmd.endsWith('/claude')) {
+      return cb(null, JSON.stringify({ type: 'result', result: 'OK' }));
+    }
+    if (cmd === 'curl') {
+      assert.match(args.join(' '), /api\/oauth\/usage/);
+      return cb(null, JSON.stringify({
+        five_hour: { utilization: 12, resets_at: '2026-07-09T18:00:00.000Z' },
+        seven_day: { utilization: 34, resets_at: '2026-07-12T18:00:00.000Z' },
+      }) + '\n200');
+    }
+    return cb(new Error(`unexpected command ${cmd}`), '');
+  };
+
+  const client = createClaudeOfficialLimitsClient({
+    home: '/home/user',
+    platform: 'darwin',
+    execFile: fakeExecFile,
+    fsp: fakeFsp,
+    env: {
+      PATH: '/usr/bin',
+      ANTHROPIC_BASE_URL: 'https://deepseek.example',
+      ANTHROPIC_AUTH_TOKEN: 'token',
+    },
+    now: () => 1783000100000,
+  });
+
+  const result = await client.fetch({ force: true });
+
+  assert.equal(result.meta.source, 'live');
+  assert.equal(result.limits.fiveHour.usedPercent, 12);
+  const refresh = calls.find((c) => c.cmd.endsWith('/claude'));
+  assert.ok(refresh);
+  assert.deepEqual(refresh.args.slice(0, 6), ['-p', '--no-session-persistence', '--safe-mode', '--tools', '', '--model']);
   assert.equal(refresh.env.ANTHROPIC_BASE_URL, undefined);
   assert.equal(refresh.env.ANTHROPIC_AUTH_TOKEN, undefined);
 });
