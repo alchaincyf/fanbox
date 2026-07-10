@@ -3423,6 +3423,7 @@ const term = {
         wg = new Wg();
         wg.onContextLoss(() => { try { wg.dispose(); } catch { /* */ } });
         xterm.loadAddon(wg);
+        this.watchAtlas(wg);
       } catch { wg = null; /* 回退默认 DOM renderer */ }
     }
     if (fit) try { fit.fit(); } catch { /* */ }
@@ -3672,6 +3673,43 @@ const term = {
     this._atlasAt = now;
     this.sessions.forEach((s) => { try { s.webgl?.clearTextureAtlas(); } catch { /* */ } });
   },
+  // 图集压力监视（分页合并的机制级防线）：addon 每开一页新图集就发事件（同一页会被共享它的每个
+  // 标签各转发一次，WeakSet 去重后计数≈真实页数）。页数到 12（上限一般 16，顶格才触发出乱码的
+  // 分页合并）就整体重建，让合并从机制上没机会发生。定时的 atlasCare 只回收页内空间、减缓页数增长，
+  // 但 clearTextureAtlas 页数只增不减（合并出的大页清空后还永久占坑不可写），压不住时得靠这里真重建
+  watchAtlas(wg) {
+    if (!wg || !wg.onAddTextureAtlasCanvas) return;
+    if (!this._atlasSeen) this._atlasSeen = new WeakSet();
+    wg.onAddTextureAtlasCanvas((canvas) => {
+      if (this._atlasSeen.has(canvas)) return;
+      this._atlasSeen.add(canvas);
+      this._atlasPages = (this._atlasPages || 0) + 1;
+      if (this._atlasPages < 12 || this._atlasRecycling) return;
+      this._atlasRecycling = true;
+      requestAnimationFrame(() => this.recycleWebgl()); // 事件在绘制途中同步发出，等这帧画完再动手
+    });
+  },
+  // 真重建：所有标签的 WebGL 插件先全部销毁、再全部重装。图集按引用计数存活，
+  // 边销毁边重装会让新插件捡回那张退化的旧图集，必须两趟分开走
+  recycleWebgl() {
+    this._atlasRecycling = false;
+    this._atlasPages = 0;
+    this._atlasSeen = new WeakSet();
+    this._atlasAt = Date.now();
+    const Wg = (!window.__noWebgl && window.WebglAddon) ? (window.WebglAddon.WebglAddon || window.WebglAddon) : null;
+    const wants = this.sessions.filter((s) => s.webgl);
+    wants.forEach((s) => { try { s.webgl.dispose(); } catch { /* */ } s.webgl = null; });
+    if (!Wg) return; // 环境没了 WebGL 就顺势落回 DOM renderer
+    wants.forEach((s) => {
+      try {
+        const wg = new Wg();
+        wg.onContextLoss(() => { try { wg.dispose(); } catch { /* */ } if (s.webgl === wg) s.webgl = null; });
+        s.xterm.loadAddon(wg);
+        s.webgl = wg;
+        this.watchAtlas(wg);
+      } catch { /* 单个失败回退 DOM，不拦其他 */ }
+    });
+  },
   // 兼容渲染模式：关 WebGL 改用 DOM renderer（无字形图集，从机制上杜绝中文乱码；大输出略慢）。
   // 对所有已开标签立即生效；选择存 localStorage，新标签在创建处同样遵守
   setWebgl(on) {
@@ -3685,6 +3723,7 @@ const term = {
           wg.onContextLoss(() => { try { wg.dispose(); } catch { /* */ } if (s.webgl === wg) s.webgl = null; });
           s.xterm.loadAddon(wg);
           s.webgl = wg;
+          this.watchAtlas(wg);
         }
       } catch { /* 单个会话失败不拦其他 */ }
     });
@@ -3697,8 +3736,12 @@ const term = {
     const xterm = sess.xterm;
     // xterm 没有直接改 fontSize 的 API，通过 options 更新
     xterm.options.fontSize = sess._fontSize;
-    // 字号变了要重新 fit，避免内容裁切
-    requestAnimationFrame(() => { try { sess.fit.fit(); sess.webgl?.clearTextureAtlas?.(); } catch { /* */ } }); // 顺带清图集，防字号变化后 CJK 残影
+    // 字号变了要重新 fit，避免内容裁切。顺带清图集防 CJK 残影——图集在同字号标签间共享，
+    // 只清自己会让其他标签的字悬空指向已清空的纹理（2.6.1 的教训），必须所有标签同一 tick 一起清
+    requestAnimationFrame(() => {
+      try { sess.fit.fit(); } catch { /* */ }
+      this.sessions.forEach((s) => { try { s.webgl?.clearTextureAtlas?.(); } catch { /* */ } });
+    });
     // 通知 PTY 重新获取尺寸（fit 会触发 onResize，已经做了）
   },
   // agent 态势感知：终端有输出→busy；静默 >2.5s→idle；进程退出→dead。
