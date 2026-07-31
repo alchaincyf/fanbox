@@ -243,6 +243,17 @@ function toast(msg, isErr) {
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
+// Markdown 渲染统一入口：marked 解析出的 HTML 必须经 DOMPurify 过滤后再写入 innerHTML。
+// 当前运行于主渲染进程，preload 暴露的 fanboxPty/fanboxFs/fanboxAgentCtl 等 IPC 桥接对象均挂载在同一个 window 上。
+// 因此，一段注入的 img onerror 脚本拥有的是打开终端、执行命令、读写文件的高危权限，而非普通 Web 网页的沙箱权限。
+// 恶意 Markdown 的攻击来源十分隐蔽：例如 Agent 抓取外部内容并写入项目内的 .md 文件，用户打开或预览时即会触发攻击。
+// 当 DOMPurify 缺失或加载失败时，必须触发 fail closed 逻辑，即回退为纯文本转义。安全组件不能在自身失效时选择默认放行。
+function mdHtml(md, opts) {
+  const raw = String(md || '');
+  if (!window.marked || window.__noMarked) return '<pre>' + escapeHtml(raw) + '</pre>';
+  if (!window.DOMPurify) return '<pre>' + escapeHtml(raw) + '</pre>';
+  return window.DOMPurify.sanitize(opts ? window.marked.parse(raw, opts) : window.marked.parse(raw));
+}
 
 // ---------- 未保存守卫 ----------
 // 文本/图片编辑期间，离开当前编辑器（点别的文件、跳目录、关预览）都要先确认，
@@ -659,7 +670,7 @@ function renderTextPreview(data) {
 function mdReadBody(md, srcPath) {
   const div = document.createElement('div');
   div.className = 'md-body';
-  div.innerHTML = window.marked ? window.marked.parse(md || '') : escapeHtml(md || '');
+  div.innerHTML = mdHtml(md);
   fixLocalImages(div, srcPath);
   if (window.hljs && !window.__noHljs) div.querySelectorAll('pre code').forEach((b) => { try { window.hljs.highlightElement(b); } catch { /* */ } });
   return div;
@@ -1381,7 +1392,7 @@ async function mdEditor(e, data, mode = 'rich') {
   // marked 不可用时退回严格比对（保守禁掉富文本，绝不误放行有损）。
   const semanticSig = (md) => {
     const d = document.createElement('div');
-    d.innerHTML = window.marked.parse(md || '');
+    d.innerHTML = mdHtml(md);
     const text = (d.textContent || '').replace(/\s+/g, ' ').trim();
     const bones = [];
     d.querySelectorAll('*').forEach((el) => {
@@ -2492,7 +2503,7 @@ const wechatView = {
     return `<div class="wx-row ${me ? 'me' : 'bot'}"><div class="wx-av ${me ? 'me' : 'bot'}">${av}</div><div class="wx-bub${me ? '' : ' md'}">${body}</div></div>`;
   },
   mdBody(text) {
-    try { if (window.marked && !window.__noMarked) return window.marked.parse(String(text || ''), { breaks: true, gfm: true }); } catch { /* 退回纯文本 */ }
+    try { if (window.marked && !window.__noMarked) return mdHtml(text, { breaks: true, gfm: true }); } catch { /* 退回纯文本 */ }
     return escapeHtml(text).replace(/\n/g, '<br>');
   },
   connectPhone() {
@@ -5149,7 +5160,7 @@ const verInfo = {
       .replace(/^### Removed$/gm, '### 移除')
       .replace(/^### Deprecated$/gm, '### 弃用')
       .replace(/^### Security$/gm, '### 安全');
-    return window.marked ? window.marked.parse(zh) : '<pre>' + escapeHtml(zh) + '</pre>';
+    return mdHtml(zh);
   },
   tipHtml() {
     const e = (this.data.entries || []).find((x) => x.version !== 'Unreleased' && x.body);

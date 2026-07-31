@@ -122,7 +122,7 @@ window.typeset = (() => {
   function build(md, srcPath, styleId) {
     const cfg = all()[has(styleId) ? styleId : DEFAULT_ID];
     const doc = new DOMParser().parseFromString(
-      window.marked && !window.__noMarked ? window.marked.parse(stripFrontMatter(md)) : '', 'text/html');
+      typeof mdHtml === 'function' ? mdHtml(stripFrontMatter(md)) : '', 'text/html');
     simplifyCode(doc);
     if (typeof fixLocalImages === 'function') fixLocalImages(doc.body, srcPath); // 本地配图接到 /api/raw，不然一律裂图
     gridImages(doc);
@@ -265,7 +265,7 @@ window.typeset = (() => {
 
   async function copyX(md, srcPath) {
     const doc = new DOMParser().parseFromString(
-      window.marked && !window.__noMarked ? window.marked.parse(stripFrontMatter(md)) : '', 'text/html');
+      typeof mdHtml === 'function' ? mdHtml(stripFrontMatter(md)) : '', 'text/html');
     const body = doc.body;
     // h1 让给文章标题，h4 以下 X 不认，统一降到 h3
     body.querySelectorAll('h1').forEach((h) => swapTag(doc, h, 'h2'));

@@ -202,6 +202,8 @@
 
   <!-- marked / highlight.js：本地 vendor，离线可用，数据不出本机 -->
   <script src="/vendor/marked/marked.min.js" onerror="window.__noMarked=1"></script>
+  <!-- marked 产物进 innerHTML 前必须过 DOMPurify，详见 app.js mdHtml。DOMPurify 加载失败时由 mdHtml 退回纯文本 -->
+  <script src="/vendor/purify.min.js" onerror="window.__noPurify=1"></script>
   <link id="hljs-theme" rel="stylesheet" href="/vendor/hljs/styles/github-dark.min.css" onerror="window.__noHljs=1" />
   <script src="/vendor/hljs/highlight.js" onerror="window.__noHljs=1"></script>
   <script src="/vendor/xterm/xterm.js" onerror="window.__noXterm=1"></script>
