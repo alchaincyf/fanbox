@@ -489,7 +489,7 @@ function createCore(opts) {
 
   return {
     terminals, termTails, termBufs, termLastOut, termWaiters, recorders,
-    recEnabled, recPrune, recStart, recEvent, recStop,
+    recDir, recEnabled, recPrune, recStart, recEvent, recStop,
     spawn, input, resize, kill, cwd, proc,
     agent, onAgentTermCreated,
     recList, recRead, recRemove, recSaveExport, recExport,

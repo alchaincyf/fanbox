@@ -21,8 +21,6 @@ let pty = null;
 try { pty = require('node-pty'); }
 catch (e) { console.error('[fanbox] node-pty 未就绪（跑 npm run rebuild）：', e.message); }
 
-const terminals = new Map();
-const termTails = new Map(); // id -> 最近输出尾巴（去 ANSI），给微信 agent 感知别的终端在跑啥/卡哪
 let win = null;
 
 // ---------- Agent 控制接口状态（/api/agent/*，见 docs/12）----------
@@ -31,9 +29,25 @@ let win = null;
 // FANBOX_AGENT_TOKEN 环境变量可覆盖，供本地开发/自动化测试注入已知 token。
 const crypto = require('crypto');
 const AGENT_TOKEN = process.env.FANBOX_AGENT_TOKEN || crypto.randomBytes(24).toString('hex');
-const termBufs = new Map();    // id -> 去 ANSI 滚动缓冲（~200KB），/api/agent/read 的数据源
-const termLastOut = new Map(); // id -> 最近输出时间戳，wait 的 idle 判定
-const termWaiters = new Map(); // id -> Set<fn(text)>，wait 的增量输出订阅
+// ---------- 终端/录制/文件监听共用核心：与网页版 server.js 同一份底层（见 pty-core.js）----------
+// 桌面传输层 = emit → win.webContents.send；电源守卫钩子指向下方 lid 段的函数声明（有提升，安全）。
+const { createCore } = require('../pty-core');
+const core = createCore({
+  pty,
+  loginShell,
+  PORT,
+  AGENT_TOKEN,
+  recDir: () => path.join(app.getPath('userData'), 'recordings'),
+  emit: (channel, payload) => { if (win && !win.isDestroyed()) win.webContents.send(channel, payload); },
+  onSpawn: () => refreshLidGuard(), // 开关开着时，第一个终端起来即生效
+  onActivity: () => { // 开关开着但还没生效 → 有输出说明可能刚开工，尽快结算电源守卫（1s 去抖）
+    if (lidIntent && !lidActive && !lidPoke) lidPoke = setTimeout(() => { lidPoke = null; refreshLidGuard(); }, 1000);
+  },
+  onExit: () => refreshLidGuard(), // 最后一个终端退出即恢复休眠
+  canCreate: () => !!(win && !win.isDestroyed()),
+});
+// 微信跨终端感知、电源面板、拖入存盘等旧代码仍直读这些名字：借同名解构保持原样不动
+const { terminals, termTails, recEvent, termCwdByPid, uniqueDest } = core;
 
 // ---------- 窗口尺寸/位置记忆 ----------
 const stateFile = () => path.join(app.getPath('userData'), 'window-state.json');
@@ -511,125 +525,15 @@ app.on('before-quit', (e) => {
   if (choice === 1) { quitConfirmed = true; isQuitting = true; app.quit(); }
 });
 app.on('window-all-closed', () => {
-  terminals.forEach((p) => { try { p.kill(); } catch { /* */ } });
-  terminals.clear();
+  core.shutdown(); // 杀终端 + 刷盘录制 + 关文件监听
   if (lidActive) { trySetDisableSleep(false); lidActive = false; } // 终端没了，别让 Mac 一直不睡
-  recorders.forEach((r) => { try { r.stream.end(); } catch { /* */ } }); // 收尾刷盘，别丢最后几行
-  recorders.clear();
   if (process.platform !== 'darwin') app.quit();
 });
 // 退出兜底：无论怎么退（⌘Q、崩溃前的正常退出），都恢复系统休眠，绝不留禁休眠的烂摊子
 app.on('will-quit', () => { if (process.platform === 'darwin') trySetDisableSleep(false); });
 
-// ---------- 终端录制（黑匣子）：把 PTY 字节流旁路成 asciinema v2 .cast ----------
-// 设计铁律：录制器是一根哑管子——只异步旁路字节，全程 try/catch，写失败就静默自废，
-// 绝不把异常抛回 PTY 数据通路。所有「聪明」（压缩/变速/导出）都推迟到回放层做。
-const recorders = new Map(); // id -> { stream, start, path }
-const REC_DIR = () => path.join(app.getPath('userData'), 'recordings');
-function recEnabled() { return process.env.FANBOX_NO_RECORD !== '1'; }
-// 常开录制不能让磁盘无限涨：保留最近 60 个 / 总量 800MB，超了从最旧删起（正在录的跳过）
-function recPrune() {
-  try {
-    const dir = REC_DIR();
-    if (!fs.existsSync(dir)) return;
-    const live = new Set([...recorders.values()].map((r) => r.path));
-    const files = fs.readdirSync(dir).filter((n) => n.endsWith('.cast'))
-      .map((n) => path.join(dir, n)).filter((f) => !live.has(f))
-      .map((f) => { try { return { f, st: fs.statSync(f) }; } catch { return null; } }).filter(Boolean)
-      .sort((a, b) => a.st.mtimeMs - b.st.mtimeMs); // 旧→新
-    const MAX_FILES = 60, MAX_BYTES = 800 * 1024 * 1024;
-    let total = files.reduce((s, x) => s + x.st.size, 0), count = files.length;
-    for (const x of files) {
-      if (count <= MAX_FILES && total <= MAX_BYTES) break;
-      try { fs.rmSync(x.f, { force: true }); total -= x.st.size; count--; } catch { /* */ }
-    }
-  } catch { /* */ }
-}
-function recStart(id, { cols, rows, cwd, theme }) {
-  if (!recEnabled()) return;
-  try {
-    const dir = REC_DIR();
-    fs.mkdirSync(dir, { recursive: true });
-    recPrune();
-    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const file = path.join(dir, `${stamp}-${id}.cast`);
-    const stream = fs.createWriteStream(file, { flags: 'a' });
-    stream.on('error', () => { try { recorders.delete(id); } catch { /* */ } }); // 盘满/权限等：自废，不连累终端
-    const header = {
-      version: 2, width: cols || 80, height: rows || 24,
-      timestamp: Math.floor(Date.now() / 1000), env: { TERM: 'xterm-256color' },
-      // fanbox 私有元信息：回放/列表用，asciinema 标准解析器会忽略未知字段
-      fanbox: { cwd: cwd || '', cols: cols || 80, rows: rows || 24, startedAt: Date.now(), theme: theme || '' },
-    };
-    stream.write(JSON.stringify(header) + '\n');
-    recorders.set(id, { stream, start: Date.now(), path: file });
-  } catch { /* 录制失败静默自废 */ }
-}
-function recEvent(id, code, data) {
-  const r = recorders.get(id);
-  if (!r) return;
-  try { r.stream.write(JSON.stringify([(Date.now() - r.start) / 1000, code, data]) + '\n'); }
-  catch { /* */ }
-}
-function recStop(id) {
-  const r = recorders.get(id);
-  if (!r) return;
-  recorders.delete(id);
-  try { r.stream.end(); } catch { /* */ }
-}
-
 // ---------- 终端 IPC（node-pty）----------
-ipcMain.handle('pty:spawn', (e, { id, cwd, cols, rows, theme }) => {
-  if (!pty) return { ok: false, error: 'node-pty 未编译，跑：npm run rebuild' };
-  const shellPath = loginShell();
-  const startCwd = cwd && fs.existsSync(cwd) ? cwd : os.homedir();
-  // login shell（-l）：GUI 启动的进程只继承精简 PATH，不读 .zprofile/.zlogin，
-  // 用户在那里配的 Homebrew/nvm/npm 全局路径（claude 等）就丢了 → 「普通终端能找到、fanbox 找不到」。
-  // 走 login shell 把这些路径带进来。Windows 的 powershell 无此机制，保持空参数。
-  const shellArgs = process.platform === 'win32' ? [] : ['-l'];
-  // GUI 启动的 app 不继承 shell 的 locale，zsh 会把中文路径按字节转义成 \M-^@ 乱码 → 兜底 UTF-8
-  const env = {
-    ...process.env, TERM: 'xterm-256color', FANBOX: '1',
-    // 终端里的 agent 天生知道自己是几号窗口、控制接口在哪、门票是啥——skill 零配置（见 docs/12）
-    FANBOX_TERM_ID: id, FANBOX_CTL: `http://127.0.0.1:${PORT}/api/agent`, FANBOX_CTL_TOKEN: AGENT_TOKEN,
-  };
-  if (!/UTF-8/i.test(env.LC_ALL || env.LC_CTYPE || env.LANG || '')) env.LANG = 'zh_CN.UTF-8';
-  let p;
-  try {
-    p = pty.spawn(shellPath, shellArgs, {
-      name: 'xterm-256color',
-      cols: cols || 80,
-      rows: rows || 24,
-      cwd: startCwd,
-      env,
-    });
-  } catch (err) { return { ok: false, error: err.message }; }
-  terminals.set(id, p);
-  refreshLidGuard(); // 开关开着时，第一个终端起来即生效
-  recStart(id, { cols, rows, cwd: startCwd, theme });
-  p.onData((data) => {
-    if (win && !win.isDestroyed()) win.webContents.send('pty:data', { id, data });
-    // 开关开着但还没生效 → 有输出说明可能刚开工，尽快结算电源守卫（1s 去抖）
-    if (lidIntent && !lidActive && !lidPoke) lidPoke = setTimeout(() => { lidPoke = null; refreshLidGuard(); }, 1000);
-    recEvent(id, 'o', data);
-    const stripped = data.replace(/\x1b\[[0-9;?]*[A-Za-z]|\x1b[()][AB0]|\r/g, '');
-    termTails.set(id, ((termTails.get(id) || '') + stripped).slice(-4000)); // 留最后 ~4KB，给微信 agent 看「最近输出」
-    termBufs.set(id, ((termBufs.get(id) || '') + stripped).slice(-200000)); // 大缓冲给 /api/agent/read
-    termLastOut.set(id, Date.now());
-    const ws = termWaiters.get(id);
-    if (ws) for (const fn of ws) { try { fn(stripped); } catch { /* 单个 waiter 异常不连累别人 */ } }
-  });
-  p.onExit(({ exitCode }) => {
-    terminals.delete(id);
-    termTails.delete(id);
-    termBufs.delete(id);
-    termLastOut.delete(id);
-    refreshLidGuard(); // 最后一个终端退出即恢复休眠
-    recStop(id);
-    if (win && !win.isDestroyed()) win.webContents.send('pty:exit', { id, exitCode });
-  });
-  return { ok: true, cwd: startCwd };
-});
+ipcMain.handle('pty:spawn', (e, opts = {}) => core.spawn(opts));
 // ---------- 剪贴板：复制图片本体 / 复制文件（访达可粘贴）----------
 ipcMain.handle('clip:image', (e, { path: p }) => {
   try { const img = nativeImage.createFromPath(p); if (img.isEmpty()) return { ok: false, error: '不是可读图片' }; clipboard.writeImage(img); return { ok: true }; }
@@ -680,13 +584,6 @@ ipcMain.handle('drop:save', (e, { name, buf }) => {
     return { ok: true, path: dest };
   } catch (err) { return { ok: false, error: err.message }; }
 });
-// 同名不覆盖：foo.png 已存在就退而求其次 foo 2.png（仿访达）
-function uniqueDest(dest) {
-  if (!fs.existsSync(dest)) return dest;
-  const d = path.dirname(dest), ext = path.extname(dest), base = path.basename(dest, ext);
-  for (let i = 2; i < 1000; i++) { const c = path.join(d, `${base} ${i}${ext}`); if (!fs.existsSync(c)) return c; }
-  return path.join(d, `${Date.now()}-${base}${ext}`);
-}
 // 拖进文件区：把没路径的拖入内容（截图浮窗等）写进目标目录
 ipcMain.handle('drop:save-into', (e, { dir, name, buf }) => {
   try {
@@ -724,288 +621,34 @@ ipcMain.handle('drop:pick-images', async (e, { defaultPath } = {}) => {
   } catch (err) { return { ok: false, error: err.message }; }
 });
 
-ipcMain.on('pty:input', (e, { id, data }) => { const p = terminals.get(id); if (p) { p.write(data); recEvent(id, 'i', data); } });
-ipcMain.on('pty:resize', (e, { id, cols, rows }) => { const p = terminals.get(id); if (p) { try { p.resize(cols, rows); } catch { /* */ } recEvent(id, 'r', `${cols}x${rows}`); } });
-ipcMain.on('pty:kill', (e, { id }) => { const p = terminals.get(id); if (p) { try { p.kill(); } catch { /* */ } terminals.delete(id); refreshLidGuard(); recStop(id); } });
+ipcMain.on('pty:input', (e, { id, data }) => core.input(id, data));
+ipcMain.on('pty:resize', (e, { id, cols, rows }) => core.resize(id, cols, rows));
+ipcMain.on('pty:kill', (e, { id }) => core.kill(id));
 
 // ---------- Agent 控制接口：把跨终端感知/控制能力开成本机 HTTP（server.js 的 /api/agent/* 调这里）----------
 // 让跑在翻箱终端里的 agent 指挥兄弟窗口：列表/读屏/输入/开窗/等待/关闭。安全模型与接口规范见 docs/12。
-const BARE_SHELL_RE = /^-?(zsh|bash|sh|fish|login)$/i;
-let agentReqSeq = 0;
-const agentCreateWaiters = new Map(); // reqId -> resolve（渲染进程建 tab 的回执）
-
-function agentTouch(id, action) { // 被 agent 控制的 tab 在界面上闪 ⚡：审计 + 围观
-  if (win && !win.isDestroyed()) win.webContents.send('agent:touch', { id, action });
-}
-async function agentList() {
-  const arr = [];
-  for (const [id, p] of terminals) {
-    const proc = (p && p.process) || '';
-    const cwd = await termCwdByPid(p && p.pid);
-    arr.push({
-      id, cwd, name: cwd ? path.basename(cwd) : '', proc,
-      busy: !!proc && !BARE_SHELL_RE.test(proc),
-      tail: (termTails.get(id) || '').slice(-500),
-    });
-  }
-  return { ok: true, terminals: arr };
-}
-function agentRead(id, lines) {
-  if (!terminals.has(id)) return { ok: false, error: 'no such terminal' };
-  const n = Math.max(1, Math.min(2000, lines || 200));
-  return { ok: true, id, text: (termBufs.get(id) || '').split('\n').slice(-n).join('\n') };
-}
-function agentSend(id, text, opts = {}) {
-  const p = terminals.get(id);
-  if (!p) return { ok: false, error: 'no such terminal' };
-  let t = String(text == null ? '' : text);
-  if (opts.paste) t = '\x1b[200~' + t + '\x1b[201~'; // bracketed paste：多行文本整块进 TUI，不被逐行提交
-  else t = t.replace(/\r\n|\n/g, '\r'); // 换行 → 回车才会真正提交
-  if (opts.submit !== false && !/\r$/.test(t)) t += '\r';
-  try { p.write(t); recEvent(id, 'i', t); agentTouch(id, 'send'); return { ok: true }; }
-  catch (e) { return { ok: false, error: String(e && e.message || e) }; }
-}
-function agentCreate(opts = {}) {
-  return new Promise((resolve) => {
-    if (!win || win.isDestroyed()) return resolve({ ok: false, error: 'no window' });
-    const reqId = 'ac' + (++agentReqSeq);
-    agentCreateWaiters.set(reqId, resolve);
-    win.webContents.send('agent:term-create', { reqId, cwd: typeof opts.cwd === 'string' ? opts.cwd : '' });
-    setTimeout(() => { if (agentCreateWaiters.delete(reqId)) resolve({ ok: false, error: 'renderer timeout' }); }, 10000);
-  }).then(async (r) => {
-    if (!r.ok) return r;
-    agentTouch(r.id, 'create');
-    if (!opts.autorun) return r;
-    // 等 shell 就绪（有过输出且静默 ≥400ms）再敲命令，login shell 初始化慢也不怕
-    const t0 = Date.now();
-    await new Promise((done) => {
-      const iv = setInterval(() => {
-        const last = termLastOut.get(r.id);
-        if ((last && Date.now() - last >= 400) || Date.now() - t0 > 8000) { clearInterval(iv); done(); }
-      }, 100);
-    });
-    const s = agentSend(r.id, String(opts.autorun));
-    return { ...r, autorun: s.ok };
-  });
-}
-ipcMain.on('agent:term-created', (e, { reqId, ok, id, error } = {}) => {
-  const resolve = agentCreateWaiters.get(reqId);
-  if (!resolve) return;
-  agentCreateWaiters.delete(reqId);
-  resolve(ok && id ? { ok: true, id } : { ok: false, error: error || 'create failed' });
-});
-function agentWait(id, opts = {}) {
-  return new Promise((resolve) => {
-    if (!terminals.has(id)) return resolve({ ok: false, error: 'no such terminal' });
-    let re = null;
-    if (opts.until) {
-      try { re = new RegExp(String(opts.until), 'm'); }
-      catch { return resolve({ ok: false, error: 'bad regex' }); }
-    }
-    const idleMs = Math.max(500, Math.min(30000, Number(opts.idleMs) || 2000));
-    const timeoutMs = Math.max(1000, Math.min(240000, Number(opts.timeoutMs) || 60000)); // 240s < node requestTimeout(300s)
-    const quietMode = opts.idle === 'quiet'; // quiet：只看输出静默（TUI 回答完）；默认还要求前台回到裸 shell
-    const started = Date.now();
-    let acc = ''; // 只累计 wait 开始后的新输出，正则也只匹配这段
-    let set = termWaiters.get(id);
-    if (!set) termWaiters.set(id, set = new Set());
-    const finish = (extra) => {
-      clearInterval(iv); set.delete(onData);
-      resolve({ elapsed: Date.now() - started, output: acc.slice(-8000), ...extra });
-    };
-    const onData = (s) => { acc = (acc + s).slice(-64000); if (re && re.test(acc)) finish({ ok: true, matched: true }); };
-    set.add(onData);
-    const iv = setInterval(() => {
-      const p = terminals.get(id);
-      if (!p) return finish({ ok: true, exited: true });
-      if (Date.now() - started >= timeoutMs) return finish({ ok: false, timeout: true });
-      if (re) return; // until 模式只认正则
-      if (Date.now() - (termLastOut.get(id) || started) < idleMs) return;
-      const proc = p.process || '';
-      if (quietMode || !proc || BARE_SHELL_RE.test(proc)) finish({ ok: true, idle: true });
-    }, 200);
-  });
-}
-function agentKill(id) {
-  const p = terminals.get(id);
-  if (!p) return { ok: false, error: 'no such terminal' };
-  try { p.kill(); agentTouch(id, 'kill'); return { ok: true }; }
-  catch (e) { return { ok: false, error: String(e && e.message || e) }; }
-}
-global.__fanboxAgent = { token: AGENT_TOKEN, list: agentList, read: agentRead, send: agentSend, create: agentCreate, wait: agentWait, kill: agentKill };
+// 实现在共用核心（pty-core.js）；这里注册到 global 供 server.js 路由调用，并转发前端建 tab 的回执。
+global.__fanboxAgent = core.agent;
+ipcMain.on('agent:term-created', (e, m) => core.onAgentTermCreated(m || {}));
 
 // ---------- 录制文件管理 IPC ----------
 // 列表：读每个 .cast 的头行拿元信息 + 文件大小/时长（末事件时间），按新→旧。失败的文件跳过不报错。
-ipcMain.handle('rec:list', () => {
-  try {
-    const dir = REC_DIR();
-    if (!fs.existsSync(dir)) return { ok: true, items: [] };
-    const live = new Set([...recorders.values()].map((r) => r.path));
-    const items = [];
-    for (const name of fs.readdirSync(dir)) {
-      if (!name.endsWith('.cast')) continue;
-      const full = path.join(dir, name);
-      try {
-        const st = fs.statSync(full);
-        if (!st.isFile()) continue;
-        // 「打开但没干活」的空终端会留下几百字节的壳（提示符+括号粘贴开关），是噪音：
-        // 非正在录且体量过小的直接不进列表，省得满屏空录像
-        if (st.size < 700 && !live.has(full)) continue;
-        const head = readFirstLine(full);
-        const meta = head ? JSON.parse(head) : {};
-        items.push({
-          name, path: full, size: st.size, mtime: st.mtimeMs,
-          width: meta.width || 80, height: meta.height || 24,
-          cwd: (meta.fanbox && meta.fanbox.cwd) || '',
-          startedAt: (meta.fanbox && meta.fanbox.startedAt) || (meta.timestamp ? meta.timestamp * 1000 : st.birthtimeMs),
-          duration: readLastEventTime(full, st.size), // 原始时长（末事件时间），列表里给用户选片参考
-          recording: live.has(full), // 还在录的会话
-        });
-      } catch { /* 损坏的文件跳过 */ }
-    }
-    items.sort((a, b) => b.startedAt - a.startedAt);
-    return { ok: true, items };
-  } catch (err) { return { ok: false, error: err.message, items: [] }; }
-});
-ipcMain.handle('rec:read', (e, { path: p }) => {
-  try {
-    if (!isInRecDir(p)) return { ok: false, error: '非录制目录' };
-    return { ok: true, text: fs.readFileSync(p, 'utf8') };
-  } catch (err) { return { ok: false, error: err.message }; }
-});
-ipcMain.handle('rec:delete', (e, { path: p }) => {
-  try {
-    if (!isInRecDir(p)) return { ok: false, error: '非录制目录' };
-    fs.rmSync(p, { force: true });
-    return { ok: true };
-  } catch (err) { return { ok: false, error: err.message }; }
-});
+ipcMain.handle('rec:list', () => core.recList());
+ipcMain.handle('rec:read', (e, { path: p } = {}) => core.recRead(p));
+ipcMain.handle('rec:delete', (e, { path: p } = {}) => core.recRemove(p));
 ipcMain.handle('rec:reveal', (e, { path: p }) => {
-  try { shell.showItemInFolder(isInRecDir(p) ? p : REC_DIR()); return { ok: true }; }
+  try { shell.showItemInFolder(core.isInRecDir(p) ? p : core.recDir()); return { ok: true }; }
   catch (err) { return { ok: false, error: err.message }; }
 });
 // 把导出好的视频/GIF 字节落进录制目录旁，返回真实路径供「在访达显示」
-ipcMain.handle('rec:save-export', (e, { name, buf }) => {
-  try {
-    const dir = path.join(REC_DIR(), 'exports');
-    fs.mkdirSync(dir, { recursive: true });
-    const safe = String(name || 'export.webm').replace(/[/\\:]/g, '_');
-    const dest = uniqueDest(path.join(dir, safe));
-    fs.writeFileSync(dest, Buffer.from(buf));
-    return { ok: true, path: dest };
-  } catch (err) { return { ok: false, error: err.message }; }
-});
+ipcMain.handle('rec:save-export', (e, { name, buf } = {}) => core.recSaveExport(name, buf));
 // 导出：渲染层录出的永远是 WebM；要 MP4/GIF 就用本机 ffmpeg 转一道（检测不到 ffmpeg 优雅退回 WebM）。
-function findFfmpeg() {
-  for (const c of ['/opt/homebrew/bin/ffmpeg', '/usr/local/bin/ffmpeg', '/usr/bin/ffmpeg']) { try { if (fs.existsSync(c)) return c; } catch { /* */ } }
-  return null;
-}
-ipcMain.handle('rec:export', async (e, { name, buf, format }) => {
-  const { execFile } = require('child_process');
-  const crypto = require('crypto');
-  try {
-    const dir = path.join(REC_DIR(), 'exports');
-    fs.mkdirSync(dir, { recursive: true });
-    const base = String(name || 'export').replace(/[/\\:]/g, '_').replace(/\.[a-z0-9]+$/i, '').slice(0, 120);
-    const tmp = path.join(dir, '.tmp-' + process.pid + '-' + crypto.randomBytes(3).toString('hex') + '.webm');
-    fs.writeFileSync(tmp, Buffer.from(buf));
-    const saveWebm = (reason) => { const d = uniqueDest(path.join(dir, base + '.webm')); fs.renameSync(tmp, d); return { ok: true, path: d, format: 'webm', fellBack: reason || null }; };
-    if (format === 'webm') return saveWebm();
-    const ff = findFfmpeg();
-    if (!ff) return saveWebm('未检测到 ffmpeg，已存 WebM');
-    const run = (args) => new Promise((res, rej) => execFile(ff, args, { timeout: 180000 }, (err, so, se) => (err ? rej(new Error((se || err.message || '').slice(0, 300))) : res())));
-    try {
-      if (format === 'mp4') {
-        const dest = uniqueDest(path.join(dir, base + '.mp4'));
-        // 偶数宽高（yuv420p 要求）+ faststart（边下边播）
-        await run(['-y', '-i', tmp, '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', dest]);
-        fs.rmSync(tmp, { force: true });
-        return { ok: true, path: dest, format: 'mp4' };
-      }
-      if (format === 'gif') {
-        const dest = uniqueDest(path.join(dir, base + '.gif'));
-        const pal = tmp + '.png';
-        // 两遍调色板，GIF 才不糊不抖；宽度封到 900，15fps，体积友好
-        await run(['-y', '-i', tmp, '-vf', 'fps=15,scale=900:-1:flags=lanczos,palettegen=stats_mode=diff', pal]);
-        await run(['-y', '-i', tmp, '-i', pal, '-lavfi', 'fps=15,scale=900:-1:flags=lanczos[x];[x][1:v]paletteuse=dither=bayer:bayer_scale=3', dest]);
-        fs.rmSync(tmp, { force: true }); fs.rmSync(pal, { force: true });
-        return { ok: true, path: dest, format: 'gif' };
-      }
-    } catch (convErr) { try { return saveWebm('转码失败（' + convErr.message + '），已存 WebM'); } catch { /* */ } }
-    return saveWebm();
-  } catch (err) { return { ok: false, error: err.message }; }
-});
-function isInRecDir(p) {
-  try { const r = path.resolve(REC_DIR()); return p && path.resolve(p).startsWith(r + path.sep); }
-  catch { return false; }
-}
-// 只读文件头一行（.cast 头），不把整个大文件读进内存
-function readFirstLine(file) {
-  const fd = fs.openSync(file, 'r');
-  try {
-    const buf = Buffer.alloc(8192);
-    const n = fs.readSync(fd, buf, 0, buf.length, 0);
-    const s = buf.slice(0, n).toString('utf8');
-    const nl = s.indexOf('\n');
-    return nl >= 0 ? s.slice(0, nl) : s;
-  } finally { fs.closeSync(fd); }
-}
-// 读文件尾，取最后一条事件的时间戳 = 原始时长（不把大文件整读进内存）
-function readLastEventTime(file, size) {
-  try {
-    const len = Math.min(4096, size);
-    const fd = fs.openSync(file, 'r');
-    try {
-      const buf = Buffer.alloc(len);
-      fs.readSync(fd, buf, 0, len, Math.max(0, size - len));
-      const lines = buf.toString('utf8').split('\n').map((l) => l.trim()).filter(Boolean);
-      for (let i = lines.length - 1; i >= 0; i--) {
-        try { const v = JSON.parse(lines[i]); if (Array.isArray(v) && typeof v[0] === 'number') return v[0]; } catch { /* 末行可能被截断，往前找 */ }
-      }
-    } finally { fs.closeSync(fd); }
-  } catch { /* */ }
-  return 0;
-}
-
-// lsof 在非 UTF-8 locale 下会把中文路径按字节转义成 \xe8 字面量（GUI 启动的 app 不继承 shell 的 locale，
-// 正中这个坑：标签标题乱码、双击定位失效）。调 lsof 时显式给 UTF-8 locale，这里再留一层 \xNN 解码兜底
-function decodeLsofPath(s) {
-  if (!/\\x[0-9a-fA-F]{2}/.test(s)) return s;
-  const bytes = [];
-  for (let i = 0; i < s.length; i++) {
-    if (s[i] === '\\' && s[i + 1] === 'x' && /^[0-9a-fA-F]{2}$/.test(s.slice(i + 2, i + 4))) {
-      bytes.push(parseInt(s.slice(i + 2, i + 4), 16));
-      i += 3;
-    } else {
-      for (const b of Buffer.from(s[i], 'utf8')) bytes.push(b);
-    }
-  }
-  return Buffer.from(bytes).toString('utf8');
-}
-// 取某终端 shell 的真实当前目录（用 lsof 查 pty 子进程的 cwd）
-function termCwdByPid(pid) {
-  return new Promise((resolve) => {
-    if (!pid) return resolve('');
-    require('child_process').exec(`lsof -a -p ${pid} -d cwd -Fn`, { env: { ...process.env, LC_ALL: 'en_US.UTF-8' }, timeout: 3000 }, (err, stdout) => {
-      if (err) return resolve('');
-      const line = (stdout || '').split('\n').find((l) => l.startsWith('n'));
-      resolve(line ? decodeLsofPath(line.slice(1)) : '');
-    });
-  });
-}
+ipcMain.handle('rec:export', (e, { name, buf, format } = {}) => core.recExport({ name, buf, format }));
 // 取某终端 shell 的真实当前目录，实现「定位到终端目录」
-ipcMain.handle('pty:cwd', async (e, { id }) => {
-  const p = terminals.get(id);
-  if (!p || !p.pid) return { ok: false };
-  const cwd = await termCwdByPid(p.pid);
-  return cwd ? { ok: true, cwd } : { ok: false };
-});
+ipcMain.handle('pty:cwd', (e, { id } = {}) => core.cwd(id));
 
 // 取终端前台进程名（node-pty 维护）：判断当前是裸 shell 还是正跑着 claude/codex 等程序
-ipcMain.handle('pty:proc', (e, { id }) => {
-  const p = terminals.get(id);
-  return p ? { ok: true, proc: p.process || '' } : { ok: false };
-});
+ipcMain.handle('pty:proc', (e, { id } = {}) => core.proc(id));
 
 // ---------- 微信 ClawBot：不经 openclaw，直连腾讯 iLink 协议 + 本机 claude/codex 无头实例 ----------
 // 编排见 electron/wechat/bridge.js（iLink 客户端 ilink.js + 本机 CLI 驱动 driver.js）。
@@ -1077,39 +720,6 @@ ipcMain.handle('power:setWechat', async (e, { on } = {}) => {
 // ---------- 文件监听（agent 改文件 → 自动刷新 + 跨项目变更收件箱）----------
 // 多目录监听：浏览目录 + 每个终端会话所在的项目目录。一下午开多个项目跑 agent 时，
 // 不在前台的项目也能感知变更。前端发来期望监听集，这里做增量 diff（关掉多余、补上新增）。
-const watchers = new Map(); // dir -> FSWatcher
-function startWatch(dir) {
-  if (watchers.has(dir) || !dir || !fs.existsSync(dir)) return;
-  try {
-    // macOS(FSEvents)/Windows 原生递归；Linux 递归不可靠，降级为非递归监听当前目录
-    const recursive = process.platform !== 'linux';
-    const w = fs.watch(dir, { persistent: false, recursive }, (evt, filename) => {
-      if (!win || win.isDestroyed()) return;
-      const name = filename ? filename.toString() : null;
-      // FSEvents 连「文件只是被读了一下」（atime/元数据更新）都报：agent cat/Read 个文件、
-      // Spotlight 扫一遍都会触发。mtime/ctime 都不新鲜 = 内容根本没动过，丢弃；
-      // stat 失败 = 刚被删，是真变更，照常转发
-      if (name) {
-        try {
-          const st = fs.statSync(path.join(dir, name));
-          const now = Date.now();
-          if (now - st.mtimeMs > 3000 && now - st.ctimeMs > 3000) return;
-        } catch { /* 已删除/无权限：当真变更转发 */ }
-      }
-      win.webContents.send('fs:changed', { dir, filename: name });
-    });
-    watchers.set(dir, w);
-  } catch { /* 无权限等，跳过该目录 */ }
-}
-ipcMain.handle('fs:watch-set', (e, { dirs }) => {
-  const want = new Set((dirs || []).filter(Boolean));
-  for (const [dir, w] of watchers) { if (!want.has(dir)) { try { w.close(); } catch { /* */ } watchers.delete(dir); } }
-  for (const dir of want) startWatch(dir);
-  return { ok: true, count: watchers.size };
-});
+ipcMain.handle('fs:watch-set', (e, { dirs } = {}) => core.watchSet(dirs));
 // 兼容旧单目录接口：等价于「只监听这一个目录」
-ipcMain.handle('fs:watch', (e, { dir }) => {
-  for (const [d, w] of watchers) { if (d !== dir) { try { w.close(); } catch { /* */ } watchers.delete(d); } }
-  startWatch(dir);
-  return { ok: true };
-});
+ipcMain.handle('fs:watch', (e, { dir } = {}) => core.watch(dir));
