@@ -1,5 +1,7 @@
 # FanBox 跨平台 + 網頁完整版 · 路線圖(map)
 
+> **狀態:完成 — 9/9 tickets 已解決,決策集可移交實作(2026-08-22)**
+
 ## Destination
 
 FanBox 全功能跨平台:macOS(arm64)+ Linux(主流 glibc)官方桌面版,加上功能完整的網頁版(真實終端 + 編輯器 + agent 控制,LAN 可達、密碼認證)。map 走完時,跨平台與網頁版的實作決策全部鎖定,可直接移交實作。
@@ -38,6 +40,7 @@ Charting 期間用戶已拍板的決策(不再重開):
 - [網頁版功能邊界矩陣](issues/03-web-function-boundary.md):網頁完整版 — 編輯器(/api/write)、檔案監聽(chokidar)、拖放存盤「進」;截圖/通知/剪貼板「降級」;錄影「進,排後」;ClawBot「不搬」。詳見 ticket Answer
 - [網頁版 PTY 與檔案事件傳輸通道](issues/05-web-pty-transport.md):WebSocket(ws 依賴)單一連線 + 訊框 type;session 歸 server、30 分鐘回收;同源 cookie + Origin 校驗;pty 管理抽 shared module。shim 契約 = preload 同介面,app.js 零改動。詳見 ticket Answer
 - [網頁版認證與傳輸安全設計](issues/04-web-auth-tls.md):分層密碼(LAN 才強制,12 位隨機存 ~/.fanbox/webpass);HttpOnly+SameSite=Lax 30 天 session;Host 白名單=本機 IP 集;v1 明文 http + 密碼;5 次失敗鎖 5 分鐘。詳見 ticket Answer
+- [Linux 防休眠 / 合蓋續跑機制](issues/07-linux-lid-guard.md):systemd-inhibit(handle-lid-switch:block)進程持有、零提權;智能模式語義沿用;GNOME 主驗 + KDE 冒煙;headless 只做 idle 抑制。詳見 ticket Answer
 
 ## Not yet specified
 
