@@ -30,6 +30,8 @@ Charting 期間用戶已拍板的決策(不再重開):
 
 <!-- 每條 closed ticket 一行:gist + 連結。research subagent 完成後由它們補上 -->
 
+- [網頁版瀏覽器端能力事實研究](issues/01-browser-capabilities.md):LAN http 下 Clipboard API / Notification / Service Worker 不可用、Fullscreen / WebGL2 / WS / SSE 可用;Node 無原生 WS server(要 `ws` 8.21.3 或手寫握手);TLS 是解鎖 secure context 的關鍵開關。詳見 docs/14
+
 ## Not yet specified
 
 - 網頁版編輯器寫盤路徑(Monaco / Milkdown 保存走 `/api/write` 還是保留 fanboxFs 橋)— 待 ticket 03 邊界定
