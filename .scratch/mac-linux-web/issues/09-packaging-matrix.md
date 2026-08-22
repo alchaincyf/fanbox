@@ -1,7 +1,7 @@
 # 打包與發布矩陣確認
 
 Type: grilling
-Status: open
+Status: claimed
 Blocked by: 08
 
 ## Question
