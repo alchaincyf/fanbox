@@ -33,6 +33,7 @@ Charting 期間用戶已拍板的決策(不再重開):
 - [網頁版瀏覽器端能力事實研究](issues/01-browser-capabilities.md):LAN http 下 Clipboard API / Notification / Service Worker 不可用、Fullscreen / WebGL2 / WS / SSE 可用;Node 無原生 WS server(要 `ws` 8.21.3 或手寫握手);TLS 是解鎖 secure context 的關鍵開關。詳見 docs/14
 - [打包與發布矩陣事實研究](issues/08-linux-packaging.md):AppImage+deb 可行(deb 需補 author、AppImage 要 FUSE);node-pty 無 Linux prebuild 但 N-API 免重編;macOS 未簽名=拔 identity/notarize;更新檢查改 fork 的改點在 main.js L174/179/253。配置草案詳見 docs/15
 - [Linux 現版冒煙與移植修補清單](issues/02-linux-smoke.md):Linux 上 server/前端/trash/usage 全 PASS;三處硬 macOS 依賴需修 — 縮圖(sips/qlmanage→ffmpeg/pdftoppm)、which 探測(/bin/zsh→$SHELL)、pty shell fallback(補 /bin/bash);mdfind/遞迴 watch/open -Ra 屬已知降級。詳見 ticket Answer
+- [Linux v1 功能降級矩陣](issues/06-linux-degrade-matrix.md):全走推薦 — 縮圖平台分派(ffmpeg/pdftoppm)、探測走 $SHELL、pty/wechat fallback 補 /bin/bash、mdfind 降級接受、app 探測掃 .desktop。= Linux v1 修補規格,可移交實作。詳見 ticket Answer
 
 ## Not yet specified
 
