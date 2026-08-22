@@ -1405,8 +1405,14 @@ async function serveStatic(req, res, urlPath) {
   // 边界要带分隔符，否则 /path/to/public-evil 也会 startsWith('/path/to/public') 通过
   if (filePath !== PUBLIC && !filePath.startsWith(PUBLIC + path.sep)) { res.writeHead(403); res.end('forbidden'); return; }
   try {
+    const st = await fsp.stat(filePath);
+    if (!st.isFile()) throw 0;
+    // no-cache + ETag：每次都问服务器「变了没」，没变走 304。不发缓存头时手机浏览器启发式
+    // 缓存会拿住旧版 app.js 不放——升级后页面看着是新的、逻辑全是旧的（登录层都不出现）
+    const etag = 'W/"' + st.size.toString(36) + '-' + Math.round(st.mtimeMs).toString(36) + '"';
+    if (req.headers['if-none-match'] === etag) { res.writeHead(304, { ETag: etag }); res.end(); return; }
     const data = await fsp.readFile(filePath);
-    res.writeHead(200, { 'Content-Type': MIME[ext(filePath)] || 'application/octet-stream' });
+    res.writeHead(200, { 'Content-Type': MIME[ext(filePath)] || 'application/octet-stream', 'Content-Length': data.length, ETag: etag, 'Cache-Control': 'no-cache' });
     res.end(data);
   } catch {
     res.writeHead(404); res.end('not found');
