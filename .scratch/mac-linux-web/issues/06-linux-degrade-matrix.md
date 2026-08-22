@@ -1,7 +1,7 @@
 # Linux v1 功能降級矩陣
 
 Type: grilling
-Status: open
+Status: claimed
 Blocked by: 02
 
 ## Question
