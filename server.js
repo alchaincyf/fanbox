@@ -2549,12 +2549,107 @@ function changelogData() {
   } catch (e) { return { ok: false, error: String((e && e.message) || e) }; }
 }
 
+  // ---------- 网页版基础设施（node server.js 直跑才有；桌面版由 electron/main.js 注入 __fanboxAgent）----------
+  const WEB_MODE = !process.versions.electron;
+  const LAN_MODE = WEB_MODE && process.env.FANBOX_LAN === '1';
+  // LAN 模式强制密码：首次自动生成 12 位随机密码存 ~/.fanbox/webpass（原子写、0600），设置页可改/可显示
+  const WEBPASS_FILE = path.join(CONFIG_DIR, 'webpass');
+  function loadWebpass() { try { return fs.readFileSync(WEBPASS_FILE, 'utf8').trim(); } catch { return ''; } }
+  function saveWebpass(pw) {
+    fs.mkdirSync(CONFIG_DIR, { recursive: true });
+    const tmp = `${WEBPASS_FILE}.tmp-${process.pid}-${Date.now()}`;
+    fs.writeFileSync(tmp, pw, { mode: 0o600 });
+    fs.renameSync(tmp, WEBPASS_FILE); // 写一半崩溃不留截断文件
+  }
+  let WEBPASS = loadWebpass();
+  if (LAN_MODE && !WEBPASS) { WEBPASS = crypto.randomBytes(9).toString('base64url').slice(0, 12); saveWebpass(WEBPASS); }
+
+  // 会话：HttpOnly + SameSite=Lax cookie，30 天滑动过期；落盘让重启服务不掉登录
+  const SESSION_TTL = 30 * 86400e3;
+  const SESSION_FILE = path.join(CONFIG_DIR, 'websessions.json');
+  const sessions = new Map(); // token -> expires(ms)
+  try {
+    const d = JSON.parse(fs.readFileSync(SESSION_FILE, 'utf8'));
+    for (const [t, e] of Object.entries(d || {})) if (e > Date.now()) sessions.set(t, e);
+  } catch { /* 首次没有，正常 */ }
+  let sessPersistTimer = null;
+  function persistSessions() {
+    clearTimeout(sessPersistTimer);
+    sessPersistTimer = setTimeout(() => {
+      try {
+        fs.mkdirSync(CONFIG_DIR, { recursive: true });
+        const o = {};
+        for (const [t, e] of sessions) if (e > Date.now()) o[t] = e;
+        const tmp = `${SESSION_FILE}.tmp-${process.pid}-${Date.now()}`;
+        fs.writeFileSync(tmp, JSON.stringify(o));
+        fs.renameSync(tmp, SESSION_FILE);
+      } catch { /* 存不进就退化为重启掉线 */ }
+    }, 500);
+  }
+  function newWebSession() { const t = crypto.randomBytes(24).toString('base64url'); sessions.set(t, Date.now() + SESSION_TTL); persistSessions(); return t; }
+  function sessionTokenOf(req) { const m = (req.headers.cookie || '').match(/(?:^|;\s*)fanbox_session=([A-Za-z0-9_-]+)/); return m ? m[1] : ''; }
+  function isLoopbackReq(req) { const a = req.socket.remoteAddress || ''; return a === '127.0.0.1' || a === '::1' || a === '::ffff:127.0.0.1'; }
+  function webAuthOk(req) {
+    if (!LAN_MODE || isLoopbackReq(req)) return true; // 本机免密（现状不变）；LAN 才要票
+    const exp = sessions.get(sessionTokenOf(req));
+    if (!exp || exp < Date.now()) return false;
+    if (exp - Date.now() < SESSION_TTL / 2) { sessions.set(sessionTokenOf(req), Date.now() + SESSION_TTL); persistSessions(); } // 滑动续期
+    return true;
+  }
+  // 暴力破解轻量防护：单 IP 连错 5 次锁 5 分钟 + 失败留痕
+  const fails = new Map(); // ip -> { n, until }
+  function failLocked(ip) { const f = fails.get(ip); return !!(f && f.until > Date.now()); }
+  function recordFail(ip) {
+    const f = fails.get(ip) || { n: 0, until: 0 };
+    f.n++;
+    if (f.n >= 5) { f.until = Date.now() + 5 * 60e3; f.n = 0; console.warn(`[web] ${ip} 密码连错 5 次，锁定 5 分钟`); }
+    fails.set(ip, f);
+    try { fs.mkdirSync(CONFIG_DIR, { recursive: true }); fs.appendFileSync(path.join(CONFIG_DIR, 'webauth.log'), `${new Date().toISOString()} FAIL ${ip}\n`); } catch { /* */ }
+  }
+  function timingSafeEq(a, b) { const ab = Buffer.from(String(a)), bb = Buffer.from(String(b)); return ab.length === bb.length && crypto.timingSafeEqual(ab, bb); }
+  // Host 白名单扩到本机各网卡 IPv4（手机访问 http://192.168.x.x:PORT）；任意域名仍拒——DNS rebinding 防护保留
+  function lanAddresses() {
+    const out = [];
+    try { for (const list of Object.values(os.networkInterfaces())) for (const ni of list || []) if (ni.family === 'IPv4' && !ni.internal) out.push(ni.address); } catch { /* */ }
+    return out;
+  }
+  if (LAN_MODE) for (const ip of lanAddresses()) ALLOWED_HOSTS.add(ip);
+
+  // 共用核心：pty / 录制 / agent 控制 / 文件监听（桌面 electron/main.js 用同一份 pty-core.js）
+  const { createCore } = require('./pty-core');
+  let core = null, wss = null, wsClients = 0, lastWsActiveAt = 0;
+  const WEB_OPEN = new Set(['/api/web/login', '/api/web/whoami']);
+  if (WEB_MODE) {
+    let pty = null;
+    try { pty = require('node-pty'); } catch (e) { console.error('[fanbox] node-pty 未就绪（跑 npm run rebuild）：', e.message); }
+    const { loginShell } = require('./electron/platform');
+    wss = new (require('ws').WebSocketServer)({ noServer: true });
+    core = createCore({
+      pty,
+      loginShell,
+      PORT,
+      AGENT_TOKEN: process.env.FANBOX_AGENT_TOKEN || crypto.randomBytes(24).toString('hex'),
+      recDir: () => path.join(CONFIG_DIR, 'records'),
+      emit: (channel, payload) => {
+        const s = JSON.stringify({ type: channel.replace(':', '-'), ...payload });
+        for (const c of wss.clients) if (c.readyState === 1) c.send(s);
+      },
+      canCreate: () => wsClients > 0,
+    });
+    global.__fanboxAgent = core.agent;
+  }
+
+
 const server = http.createServer(async (req, res) => {
   if (!hostAllowed(req)) { res.writeHead(403); res.end('forbidden host'); return; }
   if (req.method === 'POST' && !originAllowed(req)) { res.writeHead(403); res.end('forbidden origin'); return; }
   const url = new URL(req.url, `http://localhost:${PORT}`);
   const p = url.pathname;
   const qp = url.searchParams;
+  // 网页版 API 门禁：LAN 模式下非本机请求必须带有效会话（登录/whoami 放行；静态资源开放，由前端盖登录层）
+  if (WEB_MODE && p.startsWith('/api/') && !WEB_OPEN.has(p) && !webAuthOk(req)) {
+    return sendJSON(res, 401, { ok: false, error: 'unauthorized', authRequired: true });
+  }
 
   try {
     if (p === '/api/roots') {
@@ -2812,12 +2907,110 @@ const server = http.createServer(async (req, res) => {
       return sendJSON(res, 404, { ok: false, error: 'unknown agent endpoint' });
     }
 
+    // ---------- 网页版专属路由（桌面版这些能力走 preload 桥，不进这里）----------
+    if (p === '/api/web/whoami') {
+      return sendJSON(res, 200, {
+        ok: true, lanMode: LAN_MODE,
+        addresses: LAN_MODE ? lanAddresses().map((ip) => `http://${ip}:${PORT}`) : [],
+        authed: webAuthOk(req), hasPassword: !!WEBPASS,
+      });
+    }
+    if (p === '/api/web/login' && req.method === 'POST') {
+      const ip = req.socket.remoteAddress || '?';
+      if (!WEBPASS) return sendJSON(res, 400, { ok: false, error: '未设置访问密码（非 LAN 模式无需登录）' });
+      if (failLocked(ip)) return sendJSON(res, 429, { ok: false, error: '失败次数过多，请 5 分钟后再试' });
+      const b = await readBody(req);
+      if (!timingSafeEq(b.password || '', WEBPASS)) { recordFail(ip); return sendJSON(res, 403, { ok: false, error: '密码不对' }); }
+      fails.delete(ip);
+      const token = newWebSession();
+      res.setHeader('Set-Cookie', `fanbox_session=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${30 * 86400}`);
+      return sendJSON(res, 200, { ok: true });
+    }
+    if (p === '/api/web/logout' && req.method === 'POST') {
+      const t = sessionTokenOf(req);
+      if (t) { sessions.delete(t); persistSessions(); }
+      res.setHeader('Set-Cookie', 'fanbox_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0');
+      return sendJSON(res, 200, { ok: true });
+    }
+    if (p === '/api/web/password' && req.method === 'GET') return sendJSON(res, 200, { ok: true, password: WEBPASS || '' });
+    if (p === '/api/web/password' && req.method === 'POST') {
+      const b = await readBody(req);
+      if (WEBPASS && !timingSafeEq(b.current || '', WEBPASS)) return sendJSON(res, 403, { ok: false, error: '当前密码不对' });
+      const next = String(b.next || '');
+      if (next.length < 6) return sendJSON(res, 400, { ok: false, error: '新密码至少 6 位' });
+      WEBPASS = next; saveWebpass(next);
+      return sendJSON(res, 200, { ok: true });
+    }
+    if (p.startsWith('/api/web/rec/')) {
+      if (!core) return sendJSON(res, 501, { ok: false, error: 'web core 未初始化' });
+      if (p === '/api/web/rec/list') return sendJSON(res, 200, core.recList());
+      if (p === '/api/web/rec/read') return sendJSON(res, 200, core.recRead(qp.get('p')));
+      if (p === '/api/web/rec/remove' && req.method === 'POST') { const b = await readBody(req); return sendJSON(res, 200, core.recRemove(b.path)); }
+      // 录像字节前端攒成 base64 传来，落盘/转码与桌面版同一份实现
+      if (p === '/api/web/rec/save-export' && req.method === 'POST') { const b = await readBody(req); return sendJSON(res, 200, core.recSaveExport(b.name, Buffer.from(b.buf || '', 'base64'))); }
+      if (p === '/api/web/rec/export' && req.method === 'POST') { const b = await readBody(req); return sendJSON(res, 200, await core.recExport({ name: b.name, buf: Buffer.from(b.buf || '', 'base64'), format: b.format })); }
+      return sendJSON(res, 404, { ok: false, error: 'unknown rec endpoint' });
+    }
+
     // 静态资源
     return await serveStatic(req, res, p);
   } catch (err) {
     return sendJSON(res, 500, { error: err.message });
   }
 });
+
+// ---------- 网页版 WebSocket 通道：pty 流 / fs 事件 / agent 控制同一根连接（spec 05）----------
+// 帧：客户端 {type:'spawn'|'input'|'resize'|'kill'|'cwd'|'proc'|'watch-set'|'watch'|'term-created', seq?}
+//     服务端推送 {type:'pty-data'|'pty-exit'|'fs-changed'|'agent-touch'|'agent-term-create', ...}，
+//     带 seq 的请求回一条 {type:'result', seq, r}。桌面版的冒号通道名在这里换成连字符。
+if (WEB_MODE) {
+  wss.on('connection', (ws) => {
+    wsClients++;
+    lastWsActiveAt = Date.now();
+    ws.on('close', () => { wsClients--; if (wsClients === 0) lastWsActiveAt = Date.now(); });
+    ws.on('error', () => { /* 断线由 close 兜住 */ });
+    ws.on('message', async (raw) => {
+      let m; try { m = JSON.parse(raw.toString()); } catch { return; }
+      const { type, seq } = m || {};
+      const reply = (r) => { try { if (seq != null && ws.readyState === 1) ws.send(JSON.stringify({ type: 'result', seq, r })); } catch { /* */ } };
+      try {
+        switch (type) {
+          case 'spawn': reply(core.spawn(m)); break;
+          case 'input': core.input(m.id, m.data); break;
+          case 'resize': core.resize(m.id, m.cols, m.rows); break;
+          case 'kill': core.kill(m.id); break;
+          case 'cwd': reply(await core.cwd(m.id)); break;
+          case 'proc': reply(core.proc(m.id)); break;
+          case 'watch-set': reply(core.watchSet(m.dirs)); break;
+          case 'watch': reply(core.watch(m.dir)); break;
+          case 'term-created': core.onAgentTermCreated(m); break;
+          default: if (seq != null) reply({ ok: false, error: 'unknown type ' + type });
+        }
+      } catch (e) { reply({ ok: false, error: String((e && e.message) || e) }); }
+    });
+  });
+  server.on('upgrade', (req, socket, head) => {
+    let u; try { u = new URL(req.url, `http://localhost:${PORT}`); } catch { socket.destroy(); return; }
+    if (!wss || u.pathname !== '/ws') { socket.destroy(); return; } // 只开 /ws 一条路
+    if (!hostAllowed(req)) { socket.destroy(); return; }
+    if (req.headers.origin && !originAllowed(req)) { socket.destroy(); return; } // WS 无 CORS，Origin 是防 CSRF 的唯一抓手
+    if (!webAuthOk(req)) { socket.destroy(); return; } // LAN 下非本机连接必须带有效会话
+    wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
+  });
+  // 浏览器全断超过 30 分钟：回收全部终端（会话归 server，刷新/重开浏览器可重挂；agent 长跑请保持页面开着）
+  setInterval(() => {
+    if (wsClients > 0 || !lastWsActiveAt) return;
+    if (Date.now() - lastWsActiveAt < 30 * 60e3) return;
+    if (!core.terminals.size && ![...core.recorders.keys()].length) { lastWsActiveAt = 0; return; }
+    console.log('[web] 浏览器断开超过 30 分钟，回收终端会话');
+    core.shutdown();
+    lastWsActiveAt = 0;
+  }, 60e3).unref();
+  // 网页版独占进程：Ctrl+C / kill 时把终端和录制收拾干净再走
+  const bye = () => { try { core.shutdown(); } catch { /* */ } process.exit(0); };
+  process.on('SIGINT', bye);
+  process.on('SIGTERM', bye);
+}
 
 server.on('error', (err) => {
   if (err.code === 'EADDRINUSE') {
@@ -2860,11 +3053,16 @@ const previewServer = http.createServer(async (req, res) => {
 previewServer.on('error', (err) => { console.error('  ⚠️  预览服务器启动失败：', err.message); });
 previewServer.listen(PREVIEW_PORT, '127.0.0.1', () => { console.log(`  🖼  预览源（隔离）：http://localhost:${PREVIEW_PORT}`); });
 
-server.listen(PORT, '127.0.0.1', () => {
+const BIND_HOST = WEB_MODE ? (process.env.FANBOX_HOST || (LAN_MODE ? '0.0.0.0' : '127.0.0.1')) : '127.0.0.1';
+server.listen(PORT, BIND_HOST, () => {
   const link = `http://localhost:${PORT}`;
   console.log('\n  📦  FanBox 已启动');
   console.log(`  🔗  ${link}`);
   console.log('  🏠  根目录:', HOME);
+  if (WEB_MODE && LAN_MODE) {
+    for (const ip of lanAddresses()) console.log(`  📡  局域网:  http://${ip}:${PORT}`);
+    console.log(`  🔑  访问密码: ${WEBPASS ? CONFIG_DIR + '/webpass（设置页可改）' : '（未生成）'}`);
+  }
   console.log('\n  按 Ctrl+C 退出\n');
   pruneThumbs().catch(() => {}); // 启动时裁剪缩略图缓存，防止无限增长
   if (!process.env.FANBOX_NO_OPEN) {
