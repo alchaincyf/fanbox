@@ -34,13 +34,14 @@ Charting 期間用戶已拍板的決策(不再重開):
 - [打包與發布矩陣事實研究](issues/08-linux-packaging.md):AppImage+deb 可行(deb 需補 author、AppImage 要 FUSE);node-pty 無 Linux prebuild 但 N-API 免重編;macOS 未簽名=拔 identity/notarize;更新檢查改 fork 的改點在 main.js L174/179/253。配置草案詳見 docs/15
 - [Linux 現版冒煙與移植修補清單](issues/02-linux-smoke.md):Linux 上 server/前端/trash/usage 全 PASS;三處硬 macOS 依賴需修 — 縮圖(sips/qlmanage→ffmpeg/pdftoppm)、which 探測(/bin/zsh→$SHELL)、pty shell fallback(補 /bin/bash);mdfind/遞迴 watch/open -Ra 屬已知降級。詳見 ticket Answer
 - [Linux v1 功能降級矩陣](issues/06-linux-degrade-matrix.md):全走推薦 — 縮圖平台分派(ffmpeg/pdftoppm)、探測走 $SHELL、pty/wechat fallback 補 /bin/bash、mdfind 降級接受、app 探測掃 .desktop。= Linux v1 修補規格,可移交實作。詳見 ticket Answer
+- [打包與發布矩陣確認](issues/09-packaging-matrix.md):fork repo = botio/fanbox;AppImage+deb + 未簽名 arm64 dmg;GH Actions 建置;品牌/圖示沿用;版本續號 2.14.0(updater 零改動);main.js 三處 URL 抽 `FORK_REPO` 常數;Linux 更新走發布頁。詳見 ticket Answer
 
 ## Not yet specified
 
 - 網頁版編輯器寫盤路徑(Monaco / Milkdown 保存走 `/api/write` 還是保留 fanboxFs 橋)— 待 ticket 03 邊界定
 - 微信 ClawBot 遠程控制(wechat 層)在網頁版 / Linux 的搬遷 — 依賴 03 邊界 + 02 冒煙結果
 - 終端錄影黑匣子(asciinema)在網頁版的重放 / 錄製落點 — 依賴 03
-- fork 品牌與命名(productName / 圖示沿用?)與版本號策略 — 併入 ticket 09 打包確認
+- AppImage 自動更新(下載 + 換檔)— 09 Q6A 決定 v1 只開發布頁;自動化待未來
 
 ## Out of scope
 
