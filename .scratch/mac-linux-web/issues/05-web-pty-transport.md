@@ -1,7 +1,7 @@
 # 網頁版 PTY 與檔案事件傳輸通道
 
 Type: grilling
-Status: open
+Status: claimed
 Blocked by: 03
 
 ## Question
