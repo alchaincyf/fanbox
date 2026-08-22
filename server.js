@@ -2688,7 +2688,7 @@ function changelogData() {
 
   // ---------- 网页版基础设施（node server.js 直跑才有；桌面版由 electron/main.js 注入 __fanboxAgent）----------
   const WEB_MODE = !process.versions.electron;
-  const LAN_MODE = WEB_MODE && process.env.FANBOX_LAN === '1';
+  let LAN_MODE = false; // 由 FANBOX_LAN=1 或设置页开关（config lanMode）经 enableLan() 打开
   // LAN 模式强制密码：首次自动生成 12 位随机密码存 ~/.fanbox/webpass（原子写、0600），设置页可改/可显示
   const WEBPASS_FILE = path.join(CONFIG_DIR, 'webpass');
   function loadWebpass() { try { return fs.readFileSync(WEBPASS_FILE, 'utf8').trim(); } catch { return ''; } }
@@ -2750,7 +2750,20 @@ function changelogData() {
     try { for (const list of Object.values(os.networkInterfaces())) for (const ni of list || []) if (ni.family === 'IPv4' && !ni.internal) out.push(ni.address); } catch { /* */ }
     return out;
   }
-  if (LAN_MODE) for (const ip of lanAddresses()) ALLOWED_HOSTS.add(ip);
+  // 开关 LAN：env FANBOX_LAN=1 或 config lanMode:true（设置页切换，重启生效）。开 = 绑全网卡 + Host 白名单加网卡 IP + 强制密码
+  function enableLan() {
+    if (LAN_MODE) return;
+    LAN_MODE = true;
+    for (const ip of lanAddresses()) ALLOWED_HOSTS.add(ip);
+    if (!WEBPASS) { WEBPASS = crypto.randomBytes(9).toString('base64url').slice(0, 12); saveWebpass(WEBPASS); }
+  }
+  if (WEB_MODE && process.env.FANBOX_LAN === '1') enableLan(); // env 开关：启动即生效
+
+  async function lanFromConfig() { // 设置页开关：listen 前读一次 config，重启生效
+    if (WEB_MODE && !LAN_MODE) {
+      try { const cfg = await readConfig(); if (cfg && cfg.lanMode === true) { enableLan(); console.log('  📡  局域网模式已开启（config.json）'); } } catch { /* */ }
+    }
+  }
 
   // 共用核心：pty / 录制 / agent 控制 / 文件监听（桌面 electron/main.js 用同一份 pty-core.js）
   const { createCore } = require('./pty-core');
@@ -3052,6 +3065,15 @@ const server = http.createServer(async (req, res) => {
         authed: webAuthOk(req), hasPassword: !!WEBPASS,
       });
     }
+    if (p === '/api/web/lan' && req.method === 'POST') {
+      // 安全设置只许本机改：远端会话即便已认证也不能开关局域网入口
+      if (!isLoopbackReq(req)) return sendJSON(res, 403, { ok: false, error: '只能在本机（localhost）更改此设置' });
+      const b = await readBody(req);
+      const on = !!b.on;
+      if (on && !LAN_MODE) enableLan(); // 立即生成密码，用户马上能在设置页看到
+      try { await updateConfig((cfg) => { cfg.lanMode = on; }); } catch (e) { return sendJSON(res, 500, { ok: false, error: e.message }); }
+      return sendJSON(res, 200, { ok: true, lanMode: LAN_MODE, needsRestart: true });
+    }
     if (p === '/api/web/login' && req.method === 'POST') {
       const ip = req.socket.remoteAddress || '?';
       if (!WEBPASS) return sendJSON(res, 400, { ok: false, error: '未设置访问密码（非 LAN 模式无需登录）' });
@@ -3190,8 +3212,10 @@ const previewServer = http.createServer(async (req, res) => {
 previewServer.on('error', (err) => { console.error('  ⚠️  预览服务器启动失败：', err.message); });
 previewServer.listen(PREVIEW_PORT, '127.0.0.1', () => { console.log(`  🖼  预览源（隔离）：http://localhost:${PREVIEW_PORT}`); });
 
-const BIND_HOST = WEB_MODE ? (process.env.FANBOX_HOST || (LAN_MODE ? '0.0.0.0' : '127.0.0.1')) : '127.0.0.1';
-server.listen(PORT, BIND_HOST, () => {
+(async () => { // listen 前补读设置页的 LAN 开关（config lanMode），绑定地址才算得准
+  await lanFromConfig();
+  const BIND_HOST = WEB_MODE ? (process.env.FANBOX_HOST || (LAN_MODE ? '0.0.0.0' : '127.0.0.1')) : '127.0.0.1';
+  server.listen(PORT, BIND_HOST, () => {
   const link = `http://localhost:${PORT}`;
   console.log('\n  📦  FanBox 已启动');
   console.log(`  🔗  ${link}`);
@@ -3207,3 +3231,4 @@ server.listen(PORT, BIND_HOST, () => {
     exec(`${opener} ${link}`, () => {});
   }
 });
+})();

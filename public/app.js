@@ -151,6 +151,9 @@
       if (st.lanMode && st.authed) {
         rows.push(`<div class="pw-row"><span class="pw-dot"></span><span class="pw-label">访问密码</span><button class="web-mini-btn" id="web-pw-show">显示</button><button class="web-mini-btn" id="web-pw-change">修改</button></div>`);
         rows.push(`<div class="pw-row"><span class="pw-dot"></span><span class="pw-label">退出登录</span><button class="web-mini-btn" id="web-logout">登出</button></div>`);
+        rows.push(`<div class="pw-row" title="关闭后重启服务，回到仅本机可访问"><span class="pw-dot"></span><span class="pw-label">关闭局域网</span><button class="web-mini-btn" id="web-lan-off">关闭</button></div>`);
+      } else if (st.authed) {
+        rows.push(`<div class="pw-row" title="开启后手机/平板经局域网访问本机 FanBox（需密码登录）。写入配置，重启服务后生效"><span class="pw-dot"></span><span class="pw-label">局域网访问</span><label class="pw-switch" id="web-lan-sw"><i></i></label></div>`);
       }
       body.innerHTML = rows.join('');
       body.querySelectorAll('.web-addr').forEach((el) => { el.onclick = () => { try { navigator.clipboard.writeText(el.dataset.copy); toast('已复制 ' + el.dataset.copy); } catch { /* */ } }; });
@@ -166,6 +169,18 @@
         const cur = prompt('当前访问密码（未设置过可留空）') || '';
         const r = await jpost('/api/web/password', { current: cur, next });
         toast(r && r.ok ? '密码已更新' : '修改失败' + (r && r.error ? '：' + r.error : ''), !(r && r.ok));
+      };
+      const lanOn = $('#web-lan-sw');
+      if (lanOn) lanOn.onclick = async () => {
+        const r = await jpost('/api/web/lan', { on: true });
+        toast(r && r.ok ? '已开启，重启服务后手机可经局域网访问' : '开启失败' + (r && r.error ? '：' + r.error : ''), !(r && r.ok));
+        if (r && r.ok) this.st.lanMode = true;
+        this.render();
+      };
+      const lanOff = $('#web-lan-off');
+      if (lanOff) lanOff.onclick = async () => {
+        const r = await jpost('/api/web/lan', { on: false });
+        toast(r && r.ok ? '已关闭，重启服务后回到仅本机可访问' : '关闭失败', !(r && r.ok));
       };
       const out = $('#web-logout');
       if (out) out.onclick = async () => { await jpost('/api/web/logout', {}); location.reload(); };
