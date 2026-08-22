@@ -9,7 +9,7 @@
 - 发版时把 `[Unreleased]` 改成版本号 + 日期，开新的空 `[Unreleased]`
 - GitHub Release 的发布说明直接复制对应版本的段落
 
-## [Unreleased]
+## [2.15.0] - 2026-08-22
 
 ### Added
 - **网页完整版（浏览器直跑 server.js）**：终端 / 录制 / agent 控制 / 文件监听抽成共享核心 `pty-core.js`，Electron 与浏览器同一份底层。单根 WebSocket 承载 pty 流 + fs 事件 + agent 控制；录像管理与导出走 `/api/web/rec/*`。会话归服务端所有，浏览器断开 30 分钟自动回收
@@ -17,6 +17,11 @@
 - **Agent 项目 + Agent 用量加入 pi 与 Hermes**：项目列表扫 `~/.pi/agent/sessions`（会话头自带 cwd）与 `~/.hermes/terminal-sessions`（tty 记录自带 cwd）；用量面板解析 pi 会话 usage 行、读 Hermes `state.db` sessions 表（Node ≥22.5 内置 sqlite，桌面 Electron 下优雅降级隐藏）。侧栏新增两色 agent-dot
 - **Linux 平台支持（fork 2.14.0 系列）**：缩略图平台分派（Linux 用 ffmpeg + pdftoppm，macOS 维持 sips/qlmanage）；agent 探测走 login shell（`$SHELL` → `/bin/bash` → `/bin/sh`）；桌面 app 探测扫 freedesktop .desktop；pty / 微信层 shell fallback 统一到 `electron/platform.js`（macOS 默认 zsh 不变）
 - **打包矩阵（fork）**：Linux AppImage + deb；macOS 未签名 arm64 dmg（移除作者签名 / 公证配置）；更新检查与下载指向 fork 仓库（`FORK_REPO`）；GitHub Actions 建置流程（ubuntu-latest + macos-14）
+
+
+### Fixed
+- 网页版静态资源补 ETag + no-cache 协商：之前不发缓存头，手机浏览器启发式缓存锁死旧版前端（有界面无内容）
+- 文件监听事件按目录 250ms 合并冲刷 + WS 慢消费者 4MB 背压上限：修事件洪水导致的事件循环饿死与内存溢出崩溃
 
 ### Changed
 - 更新提示：Linux 平台不提供应用内下载，按钮直接开发布页（AppImage 换档即更新）

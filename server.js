@@ -2340,13 +2340,65 @@ async function skillsData(opts = {}) {
     } catch { /* */ }
   }
 
-  // 触发统计合并（按 skill 名聚合两端事件）
-  const [ce, xe] = await Promise.all([
+// ---------- pi / Hermes 的 skill 触发统计 ----------
+// pi：会话 JSONL 用户消息里的 /skill:<name> 命令（pi 把 skills 注册成斜杠命令）
+async function piSkillEvents(cutoff) {
+  const files = [];
+  const walk = async (dir, depth) => {
+    let names;
+    try { names = await fsp.readdir(dir, { withFileTypes: true }); } catch { return; }
+    for (const n of names) {
+      const fp = path.join(dir, n.name);
+      if (n.isDirectory() && depth < 2) await walk(fp, depth + 1);
+      else if (n.isFile() && n.name.endsWith('.jsonl')) {
+        try { const st = await fsp.stat(fp); if (st.mtimeMs >= cutoff) files.push(fp); } catch { /* */ }
+      }
+    }
+  };
+  await walk(PI_SESS, 0);
+  const events = [];
+  for (const fp of files) {
+    try {
+      const txt = await fsp.readFile(fp, 'utf8');
+      for (const ln of txt.split('\n')) {
+        if (!ln.includes('/skill:')) continue;
+        let d; try { d = JSON.parse(ln); } catch { continue; }
+        const m = d && d.message;
+        if (!m || m.role !== 'user') continue;
+        const c = typeof m.content === 'string' ? m.content : JSON.stringify(m.content || '');
+        const t = Date.parse(d.timestamp || '') || 0;
+        for (const mm of c.matchAll(/\/skill:([a-zA-Z0-9_-]+)/g)) events.push({ skill: mm[1], t });
+      }
+    } catch { /* 单文件坏不挡整体 */ }
+  }
+  return events;
+}
+// Hermes：state.db 里 tool_name='skill_view' 的调用，结果 JSON 自带技能名
+function hermesSkillEvents(cutoff) {
+  const db = hermesOpen();
+  if (!db) return [];
+  try {
+    const rows = db.prepare("select content, timestamp from messages where tool_name = 'skill_view' and timestamp >= ?").all(cutoff / 1000);
+    const events = [];
+    for (const r of rows) {
+      try {
+        const j = JSON.parse(r.content);
+        if (j && j.name) events.push({ skill: String(j.name), t: Math.round((r.timestamp || 0) * 1000) });
+      } catch { /* */ }
+    }
+    return events;
+  } catch { return []; }
+}
+
+  // 触发统计合并（按 skill 名聚合各家事件）
+  const [ce, xe, pe, he] = await Promise.all([
     claudeSkillEvents(cutoff).catch(() => []),
     codexSkillEvents(cutoff).catch(() => []),
+    piSkillEvents(cutoff).catch(() => []),
+    Promise.resolve(hermesSkillEvents(cutoff)).catch(() => []),
   ]);
   const stats = new Map();
-  for (const e of [...ce, ...xe]) {
+  for (const e of [...ce, ...xe, ...pe, ...he]) {
     const s = stats.get(e.skill) || { hits: 0, last: 0 };
     s.hits++; s.last = Math.max(s.last, e.t);
     stats.set(e.skill, s);
@@ -2359,10 +2411,12 @@ async function skillsData(opts = {}) {
     arr.push(it.label + '/skills' + (it.disabled ? '/_disabled' : ''));
     copies.set(it.name, arr);
   }
+  const hermesOff = hermesDisabledNames(); // config 名单禁用的 Hermes 技能，UI 同步标为已停用
   for (const it of items) {
     const st = stats.get(it.name);
     it.hits = st ? st.hits : 0;
     it.last = st ? st.last : 0;
+    if (it.source === 'hermes' && !it.disabled && hermesOff.has(it.name)) it.disabled = true;
     const cp = copies.get(it.name) || [];
     it.copies = cp.length > 1 ? cp : null;
   }
@@ -2399,11 +2453,43 @@ async function validateSkillDir(dir) {
   return { ok: true, item: it };
 }
 
+// Hermes 原生禁用走 config.yaml 的 skills.disabled 名单（它的扫描器不认 _disabled 目录，
+// 搬目录对它无效）。用 Hermes 自带 venv 的 PyYAML 读写，避免手搓 YAML
+const HERMES_PY = path.join(HOME, '.hermes', 'hermes-agent', 'venv', 'bin', 'python');
+function hermesDisabledNames() {
+  if (!fs.existsSync(HERMES_PY)) return new Set();
+  try {
+    const out = require('child_process').execFileSync(HERMES_PY, ['-c',
+      "import yaml,os,json;cfg=yaml.safe_load(open(os.path.expanduser('~/.hermes/config.yaml'),encoding='utf-8'))or{};print(json.dumps(sorted(set((cfg.get('skills') or {}).get('disabled') or []))))",
+    ], { timeout: 8000 }).toString();
+    return new Set(JSON.parse(out));
+  } catch { return new Set(); }
+}
+function hermesToggle(item, enable) {
+  if (!fs.existsSync(HERMES_PY)) return { ok: false, error: '未找到 Hermes，无法切换' };
+  const script = `
+import yaml, os
+p = os.path.expanduser('~/.hermes/config.yaml')
+with open(p, encoding='utf-8') as f: cfg = yaml.safe_load(f) or {}
+sk = cfg.setdefault('skills', {})
+dis = set(sk.get('disabled') or [])
+name = ${JSON.stringify(item.name)}
+dis.${enable ? 'discard' : 'add'}(name)
+sk['disabled'] = sorted(dis)
+with open(p, 'w', encoding='utf-8') as f: yaml.safe_dump(cfg, f, allow_unicode=True, sort_keys=False)
+`;
+  try {
+    require('child_process').execFileSync(HERMES_PY, ['-c', script], { timeout: 10000 });
+    skillsCache = { at: 0, data: null };
+    return { ok: true, dir: item.dir };
+  } catch (e) { return { ok: false, error: String((e && e.message) || e) }; }
+}
 async function skillToggle(dir, enable) {
   const v = await validateSkillDir(dir);
   if (!v.ok) return v;
   const it = v.item;
   if (it.residue) return { ok: false, error: '残留文件不能启停，请直接清理' };
+  if (it.source === 'hermes') return hermesToggle(it, !!enable); // Hermes 用原生 config 名单，搬目录对它无效
   if (!!enable === !it.disabled) return { ok: true, dir: it.dir }; // 已是目标状态
   const root = it.disabled ? path.dirname(path.dirname(it.dir)) : path.dirname(it.dir);
   const dest = enable ? path.join(root, it.name) : path.join(root, '_disabled', it.name);
