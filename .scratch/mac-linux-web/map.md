@@ -37,10 +37,12 @@ Charting 期間用戶已拍板的決策(不再重開):
 - [打包與發布矩陣確認](issues/09-packaging-matrix.md):fork repo = botio/fanbox;AppImage+deb + 未簽名 arm64 dmg;GH Actions 建置;品牌/圖示沿用;版本續號 2.14.0(updater 零改動);main.js 三處 URL 抽 `FORK_REPO` 常數;Linux 更新走發布頁。詳見 ticket Answer
 - [網頁版功能邊界矩陣](issues/03-web-function-boundary.md):網頁完整版 — 編輯器(/api/write)、檔案監聽(chokidar)、拖放存盤「進」;截圖/通知/剪貼板「降級」;錄影「進,排後」;ClawBot「不搬」。詳見 ticket Answer
 - [網頁版 PTY 與檔案事件傳輸通道](issues/05-web-pty-transport.md):WebSocket(ws 依賴)單一連線 + 訊框 type;session 歸 server、30 分鐘回收;同源 cookie + Origin 校驗;pty 管理抽 shared module。shim 契約 = preload 同介面,app.js 零改動。詳見 ticket Answer
+- [網頁版認證與傳輸安全設計](issues/04-web-auth-tls.md):分層密碼(LAN 才強制,12 位隨機存 ~/.fanbox/webpass);HttpOnly+SameSite=Lax 30 天 session;Host 白名單=本機 IP 集;v1 明文 http + 密碼;5 次失敗鎖 5 分鐘。詳見 ticket Answer
 
 ## Not yet specified
 
 - AppImage 自動更新(下載 + 換檔)— 09 Q6A 決定 v1 只開發布頁;自動化待未來
+- LAN HTTPS 化(自簽 / mkcert)— 04 Q4A 決定 v1 明文 + 密碼;HTTPS 解鎖剪貼板/通知/SW,待未來
 
 ## Out of scope
 
