@@ -31,6 +31,7 @@ Charting 期間用戶已拍板的決策(不再重開):
 <!-- 每條 closed ticket 一行:gist + 連結。research subagent 完成後由它們補上 -->
 
 - [網頁版瀏覽器端能力事實研究](issues/01-browser-capabilities.md):LAN http 下 Clipboard API / Notification / Service Worker 不可用、Fullscreen / WebGL2 / WS / SSE 可用;Node 無原生 WS server(要 `ws` 8.21.3 或手寫握手);TLS 是解鎖 secure context 的關鍵開關。詳見 docs/14
+- [打包與發布矩陣事實研究](issues/08-linux-packaging.md):AppImage+deb 可行(deb 需補 author、AppImage 要 FUSE);node-pty 無 Linux prebuild 但 N-API 免重編;macOS 未簽名=拔 identity/notarize;更新檢查改 fork 的改點在 main.js L174/179/253。配置草案詳見 docs/15
 
 ## Not yet specified
 

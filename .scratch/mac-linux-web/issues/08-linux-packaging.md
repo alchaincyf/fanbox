@@ -1,7 +1,7 @@
 # 打包與發布矩陣事實研究
 
 Type: research
-Status: open
+Status: resolved
 Blocked by: —
 
 ## Question
@@ -17,3 +17,7 @@ Blocked by: —
 7. 圖示:linux 需要哪些尺寸;現有 `build/icon.png` 可用?
 
 產出:事實 + 推薦的 build 配置草案(electron-builder 配置片段)。
+
+## Answer
+
+Linux AppImage + deb 可行,配置草案在 docs/15;唯一實質坑是 **node-pty 無 Linux prebuild**(1.0.0 零 prebuild、1.1.0 只有 darwin/win32),但它是 N-API,用系統 Node 編一次 Electron 直接能用,`rebuild:pty` 在 Linux 是多餘的;使用者需編譯工具鏈(python3/make/g++),README 要寫。deb 需補 package.json `author`;AppImage 在 Ubuntu 24.04 要 `libfuse2t64`、Arch 要 `fuse2`。macOS 未簽名 = 移除 identity/notarize/hardenedRuntime/gatekeeperAssess,右鍵開啟體驗。更新檢查改 fork:main.js 三處硬編碼(L174/179/253)換 repo。Wayland 需 `ELECTRON_OZONE_PLATFORM_HINT=auto`(預設 x11);xterm WebGL2 在 Wayland 有渲染損壞 issue,保留 DOM renderer 降級。完整:docs/15-打包與發布矩陣研究.md(研究分支 research/linux-packaging)。
