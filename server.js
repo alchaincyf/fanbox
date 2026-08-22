@@ -2129,6 +2129,8 @@ async function agentProjects(force = false) {
 const CLAUDE_SKILLS = path.join(HOME, '.claude', 'skills');
 const CODEX_SKILLS = path.join(HOME, '.codex', 'skills');
 const AGENTS_SKILLS = path.join(HOME, '.agents', 'skills');
+const PI_SKILLS = path.join(HOME, '.pi', 'agent', 'skills');       // pi：~/.pi/agent/skills
+const HERMES_SKILLS = path.join(HOME, '.hermes', 'skills');        // Hermes：~/.hermes/skills
 const SKILL_DESC_CUT = 1536; // Claude Code 单条 description 的截断线（官方文档）
 const SKILL_BUDGET_CHARS = 15000; // 描述总预算的社区实测估算值（窗口的 1%），仅作预警参考
 let skillsCache = { at: 0, data: null };
@@ -2302,6 +2304,8 @@ async function skillsData(opts = {}) {
   await scanSkillRoot(CLAUDE_SKILLS, 'claude', '~/.claude', items);
   await scanSkillRoot(CODEX_SKILLS, 'codex', '~/.codex', items);
   await scanSkillRoot(AGENTS_SKILLS, 'agents', '~/.agents', items);
+  await scanSkillRoot(PI_SKILLS, 'pi', '~/.pi', items);
+  await scanSkillRoot(HERMES_SKILLS, 'hermes', '~/.hermes', items);
   // Claude 插件自带的 skills
   try {
     const inst = JSON.parse(await fsp.readFile(path.join(HOME, '.claude', 'plugins', 'installed_plugins.json'), 'utf8'));
@@ -2365,7 +2369,7 @@ async function skillsData(opts = {}) {
   const data = {
     ok: true, at: Date.now(),
     items,
-    roots: { claude: CLAUDE_SKILLS, codex: CODEX_SKILLS, agents: AGENTS_SKILLS },
+    roots: { claude: CLAUDE_SKILLS, codex: CODEX_SKILLS, agents: AGENTS_SKILLS, pi: PI_SKILLS, hermes: HERMES_SKILLS },
     overview: {
       total: items.filter((it) => !it.residue).length,
       unique: new Set(items.filter((it) => !it.residue).map((it) => it.name)).size,

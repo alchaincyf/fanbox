@@ -1376,6 +1376,8 @@ body { transition: background-color 0.28s ease, color 0.28s ease; }
 .sk-src { font-family: var(--font-mono); font-size: 10px; color: var(--text-dim); border: 1px solid var(--border); border-radius: 4px; padding: 2px 7px; justify-self: start; background: var(--bg-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 118px; }
 .sk-src.codex { color: #3b8a6e; border-color: #3b8a6e55; }
 .sk-src.proj { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+.sk-src.pi { color: #7c66d9; border-color: #7c66d955; }
+.sk-src.hermes { color: #2f6fd0; border-color: #2f6fd055; }
 .sk-src.plugin { color: #8a6db1; border-color: #8a6db155; }
 .sk-hits { text-align: right; font-family: var(--font-display); font-size: 17px; font-variant-numeric: tabular-nums; font-weight: 550; }
 .sk-hits.zero { color: var(--text-faint); font-size: 12px; font-family: var(--font-ui); }

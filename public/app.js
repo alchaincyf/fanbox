@@ -4459,7 +4459,7 @@ const skillsView = {
     try { this.data = await api('/api/skills'); if (state.skillsMode) this.render(); } catch { /* */ }
   },
   srcTag(it) {
-    const cls = { claude: '', codex: ' codex', agents: ' codex', plugin: ' plugin', project: ' proj' }[it.source] || '';
+    const cls = { claude: '', codex: ' codex', agents: ' codex', plugin: ' plugin', project: ' proj', pi: ' pi', hermes: ' hermes' }[it.source] || '';
     return `<span class="sk-src${cls}">${escapeHtml(it.label)}</span>`;
   },
   ago(t) {
@@ -4476,6 +4476,8 @@ const skillsView = {
     else if (f === 'bad') arr = arr.filter((x) => x.issues.length);
     else if (f === 'project') arr = arr.filter((x) => x.source === 'project');
     else if (f === 'codex') arr = arr.filter((x) => x.source === 'codex' || x.source === 'agents');
+    else if (f === 'pi') arr = arr.filter((x) => x.source === 'pi');
+    else if (f === 'hermes') arr = arr.filter((x) => x.source === 'hermes');
     else if (f !== 'all') arr = arr.filter((x) => x.source === f);
     const ho = (x) => (x.residue || x.issues.length ? 0 : x.disabled ? 1 : 2);
     if (this.sort === 'hits') arr.sort((a, b) => b.hits - a.hits || b.last - a.last || a.name.localeCompare(b.name));
@@ -4509,6 +4511,8 @@ const skillsView = {
              ['project', '项目', cnt((x) => x.source === 'project')],
              ['plugin', '插件', cnt((x) => x.source === 'plugin')],
              ['codex', 'Codex', cnt((x) => x.source === 'codex' || x.source === 'agents')],
+             ['pi', 'pi', cnt((x) => x.source === 'pi')],
+             ['hermes', 'Hermes', cnt((x) => x.source === 'hermes')],
              ['dup', '跨端重复', cnt((x) => x.copies)],
              ['bad', '仅看问题', o.issues]]
             .map(([k, lbl, n]) => `<button class="sk-chip ${this.filter === k ? 'on' : ''}" data-f="${k}">${lbl} <i>${n}</i></button>`).join('')}
