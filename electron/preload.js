@@ -60,7 +60,7 @@ contextBridge.exposeInMainWorld('fanboxUpdate', {
   onAvailable: (cb) => { const h = (e, m) => cb(m); ipcRenderer.on('update:available', h); return () => ipcRenderer.removeListener('update:available', h); },
   get: () => ipcRenderer.invoke('update:get'), // 拉一把启动早期可能错过的推送
   open: (url) => ipcRenderer.invoke('update:open', { url }),
-  download: (version) => ipcRenderer.invoke('update:download', { version }), // #26 应用内下载对应架构 dmg
+  download: process.platform === 'darwin' ? (version) => ipcRenderer.invoke('update:download', { version }) : undefined, // #26 应用内下载对应架构 dmg（Linux 无 dmg，走发布页，见 docs/15）
   onProgress: (cb) => { const h = (e, m) => cb(m); ipcRenderer.on('update:progress', h); return () => ipcRenderer.removeListener('update:progress', h); },
 });
 

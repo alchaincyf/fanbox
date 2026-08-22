@@ -7,6 +7,8 @@ build/*
 !build/icon.png
 !build/icon-1024.png
 !build/entitlements.mac.plist
+!build/icons/
+!build/icons/**
 
 # agent 测试时误落根目录的产物副本（正身在 public/ 与 public/vendor/）
 /app.js

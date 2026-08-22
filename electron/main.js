@@ -172,12 +172,14 @@ function cmpVer(a, b) {
   for (let i = 0; i < 3; i++) { const d = (pa[i] || 0) - (pb[i] || 0); if (d) return d; }
   return 0;
 }
-const REL_PAGE = 'https://github.com/alchaincyf/fanbox/releases/latest';
+// fork 发布仓库（更新检查 / 下载都指向这里；上游 alchaincyf/fanbox 的 release 不再影响本机提示）
+const FORK_REPO = 'botio/fanbox';
+const REL_PAGE = `https://github.com/${FORK_REPO}/releases/latest`;
 async function fetchLatestRelease() {
   // 先走 API（信息全）；代理共享出口 IP 很容易吃 GitHub API 的未认证限流（60 次/小时/IP，403），
   // 失败就退回抓 releases/latest 网页重定向——重定向后的 URL 自带 tag，且不占 API 配额
   try {
-    const res = await net.fetch('https://api.github.com/repos/alchaincyf/fanbox/releases/latest', {
+    const res = await net.fetch(`https://api.github.com/repos/${FORK_REPO}/releases/latest`, {
       headers: { 'User-Agent': 'fanbox-app', Accept: 'application/vnd.github+json' },
     });
     if (res.ok) {
@@ -251,7 +253,7 @@ ipcMain.handle('update:download', async (e, { version }) => {
     shell.openExternal(pendingUpdate.url || REL_PAGE);
     return { ok: false, error: 'no-asset', arch };
   }
-  const url = `https://github.com/alchaincyf/fanbox/releases/download/v${ver}/${name}`;
+  const url = `https://github.com/${FORK_REPO}/releases/download/v${ver}/${name}`;
   const dest = path.join(app.getPath('downloads'), name);
   const send = (m) => { if (win && !win.isDestroyed()) win.webContents.send('update:progress', m); };
   updDownloading = true;

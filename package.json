@@ -1,7 +1,11 @@
 {
   "name": "fanbox",
-  "version": "2.13.0",
+  "version": "2.14.0",
   "description": "FanBox — the cockpit for coding agents. Command Claude Code or Codex, watch every file and line they change, and take over anytime.",
+  "author": {
+    "name": "botio",
+    "email": "botio@users.noreply.github.com"
+  },
   "bin": {
     "fanbox": "server.js"
   },
@@ -13,8 +17,9 @@
     "rebuild:pty": "cd node_modules/node-pty && node-gyp rebuild --target=$(node -p \"require('electron/package.json').version\") --dist-url=https://www.electronjs.org/headers --arch=$PTY_ARCH",
     "build:milkdown": "esbuild src-vendor/milkdown-entry.js --bundle --format=iife --minify --outfile=public/vendor/milkdown/milkdown.js --loader:.svg=dataurl --loader:.woff=file --loader:.woff2=file --loader:.ttf=file --loader:.eot=file --asset-names=[name]",
     "build:hljs": "esbuild src-vendor/hljs-entry.js --bundle --format=iife --minify --outfile=public/vendor/hljs/highlight.js && cp node_modules/marked/marked.min.js public/vendor/marked/marked.min.js && cp node_modules/highlight.js/styles/github-dark.min.css node_modules/highlight.js/styles/github.min.css public/vendor/hljs/styles/",
-    "dist": "APPLE_KEYCHAIN_PROFILE=fanbox-notary electron-builder --mac --arm64",
-    "dist:x64": "PTY_ARCH=x64 npm run rebuild:pty && APPLE_KEYCHAIN_PROFILE=fanbox-notary electron-builder --mac --x64 && PTY_ARCH=arm64 npm run rebuild:pty"
+    "dist": "npm run dist:linux && npm run dist:mac",
+    "dist:linux": "electron-builder --linux --publish never",
+    "dist:mac": "electron-builder --mac --arm64 --publish never"
   },
   "build": {
     "appId": "com.huashu.fanbox",
@@ -32,21 +37,28 @@
       "category": "public.app-category.developer-tools",
       "icon": "build/icon.icns",
       "artifactName": "${productName}-${version}-${arch}.${ext}",
-      "identity": "chen yunfei (KQQ39VZPW6)",
-      "notarize": true,
-      "hardenedRuntime": true,
-      "gatekeeperAssess": false,
-      "entitlements": "build/entitlements.mac.plist",
-      "entitlementsInherit": "build/entitlements.mac.plist",
       "target": [
         {
           "target": "dmg"
         }
       ]
     },
+    "linux": {
+      "category": "Development",
+      "icon": "build/icons",
+      "artifactName": "${productName}-${version}-${arch}.${ext}",
+      "target": [
+        "AppImage",
+        "deb"
+      ]
+    },
     "dmg": {
       "title": "FanBox",
       "writeUpdateInfo": false
+    },
+    "deb": {
+      "synopsis": "The cockpit for coding agents",
+      "description": "Command Claude Code or Codex, watch every file and line they change, and take over anytime. File browser + integrated terminal + agent control panel."
     }
   },
   "type": "commonjs",
@@ -73,5 +85,10 @@
     "monaco-editor": "^0.52.2",
     "node-gyp": "^12.4.0"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "allowScripts": {
+    "electron@33.4.11": true,
+    "esbuild@0.28.0": true,
+    "node-pty@1.1.0": true
+  }
 }

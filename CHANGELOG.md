@@ -11,6 +11,13 @@
 
 ## [Unreleased]
 
+### Added
+- **Linux 平台支持（fork 2.14.0 系列）**：缩略图平台分派（Linux 用 ffmpeg + pdftoppm，macOS 维持 sips/qlmanage）；agent 探测走 login shell（`$SHELL` → `/bin/bash` → `/bin/sh`）；桌面 app 探测扫 freedesktop .desktop；pty / 微信层 shell fallback 统一到 `electron/platform.js`（macOS 默认 zsh 不变）
+- **打包矩阵（fork）**：Linux AppImage + deb；macOS 未签名 arm64 dmg（移除作者签名 / 公证配置）；更新检查与下载指向 fork 仓库（`FORK_REPO`）；GitHub Actions 建置流程（ubuntu-latest + macos-14）
+
+### Changed
+- 更新提示：Linux 平台不提供应用内下载，按钮直接开发布页（AppImage 换档即更新）
+
 ## [2.13.0] - 2026-08-18
 
 ### Added

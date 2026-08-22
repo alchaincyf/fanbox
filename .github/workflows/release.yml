@@ -1,0 +1,68 @@
+name: build-release
+
+# fork 发布链：Linux AppImage+deb（ubuntu-latest）、macOS 未签名 arm64 dmg（macos-14）。
+# 打 tag（v2.14.0 起）自动构建并挂到 GitHub Release；workflow_dispatch 可手动跑（产物只上 artifact）。
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Cache Electron download
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/electron
+          key: electron-${{ runner.os }}-${{ hashFiles('package.json') }}
+      - run: npm ci
+      - name: Build Linux (AppImage + deb)
+        run: npx electron-builder --linux --publish never
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fanbox-linux
+          path: |
+            dist/*.AppImage
+            dist/*.deb
+
+  mac:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Cache Electron download
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Caches/electron
+          key: electron-${{ runner.os }}-${{ hashFiles('package.json') }}
+      - run: npm ci
+      - name: Build macOS (unsigned arm64 dmg)
+        run: npx electron-builder --mac --arm64 --publish never
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fanbox-mac
+          path: dist/*.dmg
+
+  release:
+    needs: [linux, mac]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: fanbox-*
+          path: dist
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/**
+          generate_release_notes: true
