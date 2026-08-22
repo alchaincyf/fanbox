@@ -200,6 +200,24 @@ kbd {
 .pw-switch.on { background: var(--accent); border-color: var(--accent); }
 .pw-switch.on i { left: 15px; background: var(--accent-ink); }
 
+/* 网页版侧栏卡（浏览器版专属）：连接状态 / 局域网地址 / 访问密码 */
+#web-sec { padding: 10px 0 4px; border-top: 1px solid var(--border); }
+#web-sec.hidden { display: none; }
+.web-addr { font-family: var(--font-mono); font-size: 11px; color: var(--text-dim); cursor: pointer; }
+.web-addr:hover { color: var(--text); }
+.web-mini-btn { font-size: 11.5px; color: var(--text-dim); background: none; border: 1px solid var(--border); border-radius: 6px; padding: 2px 8px; cursor: pointer; }
+.web-mini-btn:hover { color: var(--text); background: var(--bg-3); }
+
+/* 网页版登录层：LAN 未认证时盖住整个界面 */
+.fb-login-overlay { position: fixed; inset: 0; z-index: 9999; background: var(--bg); display: flex; align-items: center; justify-content: center; }
+.fb-login-card { width: 320px; max-width: calc(100vw - 40px); background: var(--bg-2); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); padding: 26px 24px; }
+.fb-login-card h3 { margin: 0 0 4px; font-size: 16px; color: var(--text); }
+.fb-login-card p { margin: 0 0 14px; font-size: 12.5px; color: var(--text-dim); line-height: 1.6; }
+.fb-login-card input { width: 100%; box-sizing: border-box; padding: 9px 12px; font-size: 13px; color: var(--text); background: var(--bg-3); border: 1px solid var(--border); border-radius: 8px; outline: none; }
+.fb-login-card input:focus { border-color: var(--accent); }
+.fb-login-err { min-height: 18px; margin-top: 8px; font-size: 12px; color: #e05d5d; }
+.fb-login-btn { width: 100%; margin-top: 10px; padding: 9px 0; font-size: 13px; font-weight: 600; color: var(--accent-ink); background: var(--accent); border: none; border-radius: 8px; cursor: pointer; }
+
 /* 侧栏悬停解释卡：出现在侧栏右侧，pointer-events 关掉、绝不抢鼠标 */
 .side-tip { position: fixed; z-index: 60; width: 300px; max-width: calc(100vw - 24px); background: var(--bg-2); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow); padding: 12px 14px; pointer-events: none; font-size: 12px; line-height: 1.65; color: var(--text-dim); }
 .side-tip b { display: inline-block; font-size: 12.5px; color: var(--text); margin-bottom: 4px; }

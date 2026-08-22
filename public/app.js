@@ -1,5 +1,182 @@
 /* FanBox 前端 */
 'use strict';
+// ---------- 网页版桥接（Web Shim）：无 Electron 时以 WebSocket 提供与 preload 相同介面 ----------
+// 桌面版（window.fanboxEnv.isDesktopApp）直接跳过，走 preload 真桥；浏览器版在这里把
+// fanboxPty / fanboxFs / fanboxAgentCtl 映射到 ws://…/ws 帧（spec 05），fanboxRec 走 /api/web/rec/*。
+// app.js 其余部分零改动：term.available() 只看 window.fanboxPty 是否存在。
+(function () {
+  if (window.__fanboxWebShim) return;
+  if (window.fanboxEnv && window.fanboxEnv.isDesktopApp) return; // 桌面版：preload 已提供真桥
+  if (window.fanboxPty) return; // 已有桥（老版桌面 preload）：不覆盖
+  window.__fanboxWebShim = true;
+
+  let ws = null, seq = 0, backoff = 600, wsReady = false;
+  const pending = new Map(); // seq -> resolve(result)
+  const subs = { 'pty-data': new Set(), 'pty-exit': new Set(), 'fs-changed': new Set(), 'agent-touch': new Set(), 'agent-term-create': new Set() };
+  const connWaiters = [];
+
+  function notifyConn() { connWaiters.splice(0).forEach((f) => { try { f(wsReady); } catch { /* */ } }); }
+  function whenConnected(ms) {
+    return new Promise((res) => {
+      if (wsReady) return res(true);
+      const f = (ok) => { clearTimeout(t); res(ok); };
+      const t = setTimeout(() => { const i = connWaiters.indexOf(f); if (i >= 0) connWaiters.splice(i, 1); res(false); }, ms || 8000);
+      connWaiters.push(f);
+    });
+  }
+  function connect() {
+    try { ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws'); }
+    catch { return retry(); }
+    ws.onopen = () => { wsReady = true; backoff = 600; notifyConn(); };
+    ws.onclose = () => {
+      const was = wsReady; wsReady = false; notifyConn();
+      for (const [, r] of pending) r({ ok: false, error: '连接断开' });
+      pending.clear();
+      if (was || !window.__fbLoginShown) retry(); // 401 登录层盖着时不空转重连
+    };
+    ws.onerror = () => { /* onclose 会跟着来 */ };
+    ws.onmessage = (ev) => {
+      let m; try { m = JSON.parse(ev.data); } catch { return; }
+      if (m.type === 'result') { const r = pending.get(m.seq); if (r) { pending.delete(m.seq); r(m.r); } return; }
+      const set = subs[m.type];
+      if (set) for (const f of set) { try { f(m); } catch { /* 单个订阅者异常不连累别人 */ } }
+    };
+  }
+  function retry() { setTimeout(connect, backoff); backoff = Math.min(backoff * 2, 8000); }
+  connect();
+
+  async function call(m, timeoutMs) {
+    if (!(await whenConnected(8000))) return { ok: false, error: '未连接到服务器' };
+    return new Promise((resolve) => {
+      const s = ++seq;
+      pending.set(s, resolve);
+      try { ws.send(JSON.stringify({ ...m, seq: s })); } catch { pending.delete(s); resolve({ ok: false, error: '发送失败' }); }
+      setTimeout(() => { if (pending.delete(s)) resolve({ ok: false, error: '超时' }); }, timeoutMs || 15000);
+    });
+  }
+  function tell(m) { try { if (wsReady) ws.send(JSON.stringify(m)); } catch { /* 断线即丢，与桌面 IPC 语义一致 */ } }
+  function sub(k, cb) { subs[k].add(cb); return () => subs[k].delete(cb); }
+
+  window.fanboxEnv = { isDesktopApp: false, platform: '' }; // platform 由 whoami 回填（服务器所在机器才是真平台）
+  window.fanboxPty = {
+    spawn: (opts) => call({ type: 'spawn', ...(opts || {}) }),
+    input: (id, data) => tell({ type: 'input', id, data }),
+    resize: (id, cols, rows) => tell({ type: 'resize', id, cols, rows }),
+    kill: (id) => tell({ type: 'kill', id }),
+    cwd: (id) => call({ type: 'cwd', id }),
+    proc: (id) => call({ type: 'proc', id }),
+    onData: (cb) => sub('pty-data', cb),
+    onExit: (cb) => sub('pty-exit', cb),
+  };
+  window.fanboxFs = {
+    watch: (dir) => call({ type: 'watch', dir }),
+    watchSet: (dirs) => call({ type: 'watch-set', dirs }),
+    onChanged: (cb) => sub('fs-changed', cb),
+  };
+  // agent 开窗/闪标记：与桌面 preload 同介面，走同一根 WS
+  window.fanboxAgentCtl = {
+    onCreate: (cb) => sub('agent-term-create', cb),
+    created: (m) => tell({ type: 'term-created', ...(m || {}) }),
+    onTouch: (cb) => sub('agent-touch', cb),
+  };
+
+  // 录像走 HTTP（与 server 端 /api/web/rec/* 对齐）；字节攒成 base64 过 JSON
+  function b64(u8) {
+    try {
+      const u = u8 instanceof Uint8Array ? u8 : new Uint8Array(u8 || 0);
+      let s = '';
+      for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000));
+      return btoa(s);
+    } catch { return ''; }
+  }
+  async function jfetch(url, opt) {
+    try {
+      const r = await fetch(url, opt);
+      if (r.status === 401) { showLogin(); return { ok: false, error: '需要登录' }; }
+      return await r.json();
+    } catch (e) { return { ok: false, error: String((e && e.message) || e) }; }
+  }
+  const jpost = (url, body) => jfetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
+  window.fanboxRec = {
+    list: () => jfetch('/api/web/rec/list'),
+    read: (path) => jfetch('/api/web/rec/read?p=' + encodeURIComponent(path)),
+    remove: (path) => jpost('/api/web/rec/remove', { path }),
+    reveal: async () => ({ ok: false }), // 浏览器没有访达：静默无操作
+    saveExport: (name, buf) => jpost('/api/web/rec/save-export', { name, buf: b64(buf) }),
+    export: (name, buf, format) => jpost('/api/web/rec/export', { name, buf: b64(buf), format }),
+  };
+
+  // ---------- 登录层：LAN 模式未认证时盖住整个界面 ----------
+  function showLogin(err) {
+    if ($('#fb-login-overlay')) { const e = $('#fb-login-err'); if (e) e.textContent = err || ''; return; }
+    window.__fbLoginShown = true;
+    const ov = document.createElement('div');
+    ov.id = 'fb-login-overlay'; ov.className = 'fb-login-overlay';
+    ov.innerHTML = `<div class="fb-login-card"><h3>FanBox 访问验证</h3><p>这台 FanBox 开了局域网访问，需要输入访问密码。<br>密码存在服务器的 ~/.fanbox/webpass。</p><input id="fb-login-pw" type="password" placeholder="访问密码" autocomplete="current-password"><div id="fb-login-err" class="fb-login-err">${err || ''}</div><button id="fb-login-go" class="fb-login-btn">进入</button></div>`;
+    document.body.appendChild(ov);
+    const go = async () => {
+      const pw = $('#fb-login-pw').value;
+      const r = await jpost('/api/web/login', { password: pw });
+      if (r && r.ok) location.reload();
+      else { const e = $('#fb-login-err'); if (e) e.textContent = (r && r.error) || '登录失败'; }
+    };
+    $('#fb-login-go').onclick = go;
+    $('#fb-login-pw').onkeydown = (e) => { if (e.key === 'Enter') go(); };
+    $('#fb-login-pw').focus();
+  }
+  window.__fanboxShowLogin = showLogin;
+
+  // ---------- 侧栏「网页版」卡：连接状态 / 局域网地址 / 访问密码 ----------
+  const webSec = {
+    st: null, connected: false,
+    async init() {
+      const sec = $('#web-sec');
+      if (!sec) return;
+      sec.classList.remove('hidden');
+      this.render();
+      const w = await jfetch('/api/web/whoami');
+      if (!w || !w.ok) return;
+      if (w.platform) window.fanboxEnv.platform = w.platform;
+      if (w.lanMode && !w.authed) showLogin();
+      this.st = w;
+      this.render();
+    },
+    render() {
+      const body = $('#web-sec-body');
+      if (!body) return;
+      const st = this.st || {};
+      const rows = [];
+      rows.push(`<div class="pw-row" title="与服务器的 WebSocket 连接状态"><span class="pw-dot${this.connected ? ' lit' : ''}"></span><span class="pw-label">${this.connected ? '已连接' : '连接中…'}</span></div>`);
+      for (const a of st.addresses || []) rows.push(`<div class="pw-row" title="点击复制地址"><span class="pw-dot"></span><span class="pw-label web-addr" data-copy="${a}">${a}</span></div>`);
+      if (st.lanMode && st.authed) {
+        rows.push(`<div class="pw-row"><span class="pw-dot"></span><span class="pw-label">访问密码</span><button class="web-mini-btn" id="web-pw-show">显示</button><button class="web-mini-btn" id="web-pw-change">修改</button></div>`);
+        rows.push(`<div class="pw-row"><span class="pw-dot"></span><span class="pw-label">退出登录</span><button class="web-mini-btn" id="web-logout">登出</button></div>`);
+      }
+      body.innerHTML = rows.join('');
+      body.querySelectorAll('.web-addr').forEach((el) => { el.onclick = () => { try { navigator.clipboard.writeText(el.dataset.copy); toast('已复制 ' + el.dataset.copy); } catch { /* */ } }; });
+      const show = $('#web-pw-show');
+      if (show) show.onclick = async () => {
+        const r = await jfetch('/api/web/password');
+        toast(r && r.ok ? '访问密码：' + r.password : '读取失败', !(r && r.ok));
+      };
+      const change = $('#web-pw-change');
+      if (change) change.onclick = async () => {
+        const next = prompt('新访问密码（至少 6 位）');
+        if (!next) return;
+        const cur = prompt('当前访问密码（未设置过可留空）') || '';
+        const r = await jpost('/api/web/password', { current: cur, next });
+        toast(r && r.ok ? '密码已更新' : '修改失败' + (r && r.error ? '：' + r.error : ''), !(r && r.ok));
+      };
+      const out = $('#web-logout');
+      if (out) out.onclick = async () => { await jpost('/api/web/logout', {}); location.reload(); };
+    },
+  };
+  // WS 连接状态点亮侧栏卡
+  const origNotify = notifyConn;
+  notifyConn = function () { origNotify(); webSec.connected = wsReady; if (window.__fbWebSecBooted) webSec.render(); };
+  window.__fbWebSecBooted = true;
+  window.webSec = webSec;
+})();
 
 const $ = (s) => document.querySelector(s);
 const api = (p) => fetch(p).then((r) => r.json());
@@ -5539,6 +5716,7 @@ async function init() {
   await loadRoots();
   await loadFavorites();
   powerBar.init();
+  webSec.init(); // 网页版侧栏卡（桌面版里是空操作）
   verInfo.init();
   cronPanel.syncBadge();
   loadAgentProjects();
@@ -5618,5 +5796,6 @@ if (window.fanboxAgentCtl) {
     setTimeout(() => term.renderTabs(), 8200); // 标记过期后重画抹掉
   });
 }
+
 
 init();

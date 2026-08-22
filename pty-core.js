@@ -441,10 +441,13 @@ function createCore(opts) {
   // 网页版共用这一份（chokidar 跨平台递归）；桌面版从原生 fs.watch 迁来，行为对齐：
   // 保留「新鲜度过滤」——FSEvents 连「文件只是被读了一下」都报，mtime/ctime 都不新鲜 = 内容没动过，丢弃。
   const watchers = new Map(); // dir -> chokidar FSWatcher
+  // 递归监听但绕开重目录：node_modules/.cache/包管理器目录动辄几万文件，全听会事件洪水
+  // （CPU 打满、内存暴涨）。agent 真正改的是源码和产物，这些重目录的变更本来就该忽略。
+  const WATCH_IGNORE = /(^|[/\\])(node_modules|\.git|\.next|\.cache|\.local|\.config|Library|__pycache__|\.venv|venv|\.nvm|\.mise|\.cargo|\.rustup|\.gradle|\.npm|\.pnpm-store|\.bun|\.expo)([/\\]|$)/;
   function startWatch(dir) {
     if (!chokidar || watchers.has(dir) || !dir || !fs.existsSync(dir)) return;
     try {
-      const w = chokidar.watch(dir, { ignoreInitial: true, persistent: false });
+      const w = chokidar.watch(dir, { ignoreInitial: true, persistent: false, ignored: WATCH_IGNORE });
       w.on('all', (evt, fp) => {
         const name = fp ? path.relative(dir, fp) : null;
         if (name) {
@@ -456,6 +459,9 @@ function createCore(opts) {
         }
         emit('fs:changed', { dir, filename: name });
       });
+      // 无权限的子目录（如 systemd-private-*、其他用户目录）会发 error 事件：必须接住，
+      // 否则 unhandled 'error' 直接掀翻整个进程（桌面原生 fs.watch 没这个坑）
+      w.on('error', () => { /* 吞掉：跳过读不了的目录，其余照常 */ });
       watchers.set(dir, w);
     } catch { /* 无权限等，跳过该目录 */ }
   }
