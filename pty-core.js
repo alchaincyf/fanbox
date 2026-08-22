@@ -448,6 +448,15 @@ function createCore(opts) {
     if (!chokidar || watchers.has(dir) || !dir || !fs.existsSync(dir)) return;
     try {
       const w = chokidar.watch(dir, { ignoreInitial: true, persistent: false, ignored: WATCH_IGNORE });
+      // 同目录 250ms 合并冲刷：构建期一秒几千个事件会把事件循环与传输层打爆；
+      // 前端刷新本来就是幂等的整表重读，合并成「这 250ms 里动了哪些文件」零损失
+      let names = new Set(), flushTimer = null;
+      const flush = () => {
+        flushTimer = null;
+        if (!names.size) return;
+        for (const n of names) emit('fs:changed', { dir, filename: n });
+        names = new Set();
+      };
       w.on('all', (evt, fp) => {
         const name = fp ? path.relative(dir, fp) : null;
         if (name) {
@@ -456,8 +465,11 @@ function createCore(opts) {
             const now = Date.now();
             if (now - st.mtimeMs > 3000 && now - st.ctimeMs > 3000) return;
           } catch { /* 已删除/无权限：当真变更转发 */ }
+          names.add(name);
+          if (!flushTimer) flushTimer = setTimeout(flush, 250);
+        } else {
+          emit('fs:changed', { dir, filename: name });
         }
-        emit('fs:changed', { dir, filename: name });
       });
       // 无权限的子目录（如 systemd-private-*、其他用户目录）会发 error 事件：必须接住，
       // 否则 unhandled 'error' 直接掀翻整个进程（桌面原生 fs.watch 没这个坑）

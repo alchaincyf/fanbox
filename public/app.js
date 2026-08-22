@@ -32,7 +32,7 @@
       const was = wsReady; wsReady = false; notifyConn();
       for (const [, r] of pending) r({ ok: false, error: '连接断开' });
       pending.clear();
-      if (was || !window.__fbLoginShown) retry(); // 401 登录层盖着时不空转重连
+      retry();
     };
     ws.onerror = () => { /* onclose 会跟着来 */ };
     ws.onmessage = (ev) => {
@@ -90,11 +90,8 @@
     } catch { return ''; }
   }
   async function jfetch(url, opt) {
-    try {
-      const r = await fetch(url, opt);
-      if (r.status === 401) { showLogin(); return { ok: false, error: '需要登录' }; }
-      return await r.json();
-    } catch (e) { return { ok: false, error: String((e && e.message) || e) }; }
+    try { return await (await fetch(url, opt)).json(); }
+    catch (e) { return { ok: false, error: String((e && e.message) || e) }; }
   }
   const jpost = (url, body) => jfetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
   window.fanboxRec = {
@@ -106,25 +103,6 @@
     export: (name, buf, format) => jpost('/api/web/rec/export', { name, buf: b64(buf), format }),
   };
 
-  // ---------- 登录层：LAN 模式未认证时盖住整个界面 ----------
-  function showLogin(err) {
-    if ($('#fb-login-overlay')) { const e = $('#fb-login-err'); if (e) e.textContent = err || ''; return; }
-    window.__fbLoginShown = true;
-    const ov = document.createElement('div');
-    ov.id = 'fb-login-overlay'; ov.className = 'fb-login-overlay';
-    ov.innerHTML = `<div class="fb-login-card"><h3>FanBox 访问验证</h3><p>这台 FanBox 开了局域网访问，需要输入访问密码。<br>密码存在服务器的 ~/.fanbox/webpass。</p><input id="fb-login-pw" type="password" placeholder="访问密码" autocomplete="current-password"><div id="fb-login-err" class="fb-login-err">${err || ''}</div><button id="fb-login-go" class="fb-login-btn">进入</button></div>`;
-    document.body.appendChild(ov);
-    const go = async () => {
-      const pw = $('#fb-login-pw').value;
-      const r = await jpost('/api/web/login', { password: pw });
-      if (r && r.ok) location.reload();
-      else { const e = $('#fb-login-err'); if (e) e.textContent = (r && r.error) || '登录失败'; }
-    };
-    $('#fb-login-go').onclick = go;
-    $('#fb-login-pw').onkeydown = (e) => { if (e.key === 'Enter') go(); };
-    $('#fb-login-pw').focus();
-  }
-  window.__fanboxShowLogin = showLogin;
 
   // ---------- 侧栏「网页版」卡：连接状态 / 局域网地址 / 访问密码 ----------
   const webSec = {
@@ -137,7 +115,6 @@
       const w = await jfetch('/api/web/whoami');
       if (!w || !w.ok) return;
       if (w.platform) window.fanboxEnv.platform = w.platform;
-      if (w.lanMode && !w.authed) showLogin();
       this.st = w;
       this.render();
     },
@@ -148,28 +125,13 @@
       const rows = [];
       rows.push(`<div class="pw-row" title="与服务器的 WebSocket 连接状态"><span class="pw-dot${this.connected ? ' lit' : ''}"></span><span class="pw-label">${this.connected ? '已连接' : '连接中…'}</span></div>`);
       for (const a of st.addresses || []) rows.push(`<div class="pw-row" title="点击复制地址"><span class="pw-dot"></span><span class="pw-label web-addr" data-copy="${a}">${a}</span></div>`);
-      if (st.lanMode && st.authed) {
-        rows.push(`<div class="pw-row"><span class="pw-dot"></span><span class="pw-label">访问密码</span><button class="web-mini-btn" id="web-pw-show">显示</button><button class="web-mini-btn" id="web-pw-change">修改</button></div>`);
-        rows.push(`<div class="pw-row"><span class="pw-dot"></span><span class="pw-label">退出登录</span><button class="web-mini-btn" id="web-logout">登出</button></div>`);
-        rows.push(`<div class="pw-row" title="关闭后重启服务，回到仅本机可访问"><span class="pw-dot"></span><span class="pw-label">关闭局域网</span><button class="web-mini-btn" id="web-lan-off">关闭</button></div>`);
-      } else if (st.authed) {
-        rows.push(`<div class="pw-row" title="开启后手机/平板经局域网访问本机 FanBox（需密码登录）。写入配置，重启服务后生效"><span class="pw-dot"></span><span class="pw-label">局域网访问</span><label class="pw-switch" id="web-lan-sw"><i></i></label></div>`);
+      if (st.lanMode) {
+        rows.push(`<div class="pw-row" title="关闭后回到仅本机可访问（立即生效）"><span class="pw-dot"></span><span class="pw-label">关闭局域网</span><button class="web-mini-btn" id="web-lan-off">关闭</button></div>`);
+      } else {
+        rows.push(`<div class="pw-row" title="开启后手机/平板经局域网访问本机 FanBox，立即生效。请只在受信任的网络（家庭 Wi-Fi / Tailscale）开启"><span class="pw-dot"></span><span class="pw-label">局域网访问</span><label class="pw-switch" id="web-lan-sw"><i></i></label></div>`);
       }
       body.innerHTML = rows.join('');
       body.querySelectorAll('.web-addr').forEach((el) => { el.onclick = () => { try { navigator.clipboard.writeText(el.dataset.copy); toast('已复制 ' + el.dataset.copy); } catch { /* */ } }; });
-      const show = $('#web-pw-show');
-      if (show) show.onclick = async () => {
-        const r = await jfetch('/api/web/password');
-        toast(r && r.ok ? '访问密码：' + r.password : '读取失败', !(r && r.ok));
-      };
-      const change = $('#web-pw-change');
-      if (change) change.onclick = async () => {
-        const next = prompt('新访问密码（至少 6 位）');
-        if (!next) return;
-        const cur = prompt('当前访问密码（未设置过可留空）') || '';
-        const r = await jpost('/api/web/password', { current: cur, next });
-        toast(r && r.ok ? '密码已更新' : '修改失败' + (r && r.error ? '：' + r.error : ''), !(r && r.ok));
-      };
       const lanOn = $('#web-lan-sw');
       if (lanOn) lanOn.onclick = async () => {
         const r = await jpost('/api/web/lan', { on: true });
@@ -186,8 +148,6 @@
         else toast('关闭失败', true);
         this.render();
       }
-      const out = $('#web-logout');
-      if (out) out.onclick = async () => { await jpost('/api/web/logout', {}); location.reload(); };
     },
   };
   // WS 连接状态点亮侧栏卡

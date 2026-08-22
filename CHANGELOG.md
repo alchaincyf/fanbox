@@ -13,7 +13,7 @@
 
 ### Added
 - **网页完整版（浏览器直跑 server.js）**：终端 / 录制 / agent 控制 / 文件监听抽成共享核心 `pty-core.js`，Electron 与浏览器同一份底层。单根 WebSocket 承载 pty 流 + fs 事件 + agent 控制；录像管理与导出走 `/api/web/rec/*`。会话归服务端所有，浏览器断开 30 分钟自动回收
-- **局域网访问模式**：`FANBOX_LAN=1` 或侧栏「网页版」卡开关（写入 config，重启生效）——绑全网卡、首次自动生成 12 位随机密码存 `~/.fanbox/webpass`，非本机访问强制登录（HttpOnly 会话 cookie 30 天滑动过期），单 IP 连错 5 次锁 5 分钟；本机 localhost 免密不变。设计取舍见 `.scratch/mac-linux-web/issues/04`
+- **局域网访问模式（无密码）**：`FANBOX_LAN=1` 或侧栏「网页版」卡开关（写入 config 并即时热换绑，无需重启）——绑全网卡，手机连同一 Wi-Fi 或 Tailscale 即可访问；Host 白名单只收本机网卡 IP（DNS rebinding 防护保留）。无密码设计，请只在受信任网络开启
 - **Agent 项目 + Agent 用量加入 pi 与 Hermes**：项目列表扫 `~/.pi/agent/sessions`（会话头自带 cwd）与 `~/.hermes/terminal-sessions`（tty 记录自带 cwd）；用量面板解析 pi 会话 usage 行、读 Hermes `state.db` sessions 表（Node ≥22.5 内置 sqlite，桌面 Electron 下优雅降级隐藏）。侧栏新增两色 agent-dot
 - **Linux 平台支持（fork 2.14.0 系列）**：缩略图平台分派（Linux 用 ffmpeg + pdftoppm，macOS 维持 sips/qlmanage）；agent 探测走 login shell（`$SHELL` → `/bin/bash` → `/bin/sh`）；桌面 app 探测扫 freedesktop .desktop；pty / 微信层 shell fallback 统一到 `electron/platform.js`（macOS 默认 zsh 不变）
 - **打包矩阵（fork）**：Linux AppImage + deb；macOS 未签名 arm64 dmg（移除作者签名 / 公证配置）；更新检查与下载指向 fork 仓库（`FORK_REPO`）；GitHub Actions 建置流程（ubuntu-latest + macos-14）

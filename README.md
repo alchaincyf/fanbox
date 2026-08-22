@@ -181,22 +181,13 @@ I don't own a Windows machine and can't reliably verify a Windows build or judge
 ### 网页版（不打包，直接跑）/ Web (no packaging)
 
 ```bash
-node server.js
+FANBOX_LAN=1 node server.js     # 或在侧栏「网页版」卡点「局域网访问」，即时生效
 ```
+- 启动横幅或侧栏卡显示局域网地址（如 `http://192.168.x.x:4567`），手机连同一 Wi-Fi 即可打开；Tailscale 地址（100.x）则任何网络都能访问。
+- 无密码：请只在受信任的网络开启（家庭 Wi-Fi / 你自己的 Tailscale 网络）。本机 `localhost` 行为不变。
+- Host 白名单只收本机网卡 IP（DNS rebinding 防护保留）；浏览器全断 30 分钟后自动回收终端会话。
 
-浏览器打开 `http://localhost:4567`。网页完整版 = 桌面版同一份界面与底层（`pty-core.js`）：内嵌终端、文件监听、编辑器、终端录像、Agent 控制接口全部可用，只差桌面专属的系统级能力（剪贴板图片/文件、截图直通车、防休眠、微信 ClawBot）。
-
-**局域网访问（手机/平板开 FanBox）**：
-
-```bash
-FANBOX_LAN=1 node server.js     # 首次自动生成 12 位随机密码，存 ~/.fanbox/webpass
-```
-
-- 启动横幅打印局域网地址（如 `http://192.168.x.x:4567`），手机连同一 Wi-Fi 即可打开。
-- 明文 HTTP + 密码的取舍与设计细节见 `.scratch/mac-linux-web/issues/04-web-auth-tls.md`；浏览器全断 30 分钟后自动回收终端会话。
-- 密码可在侧栏「网页版」卡查看/修改；单 IP 连错 5 次锁 5 分钟。
-Open `http://localhost:4567`. The full web version shares the desktop's UI and core (`pty-core.js`): embedded terminal, file watching, editors, session recording and the agent control API all work — only OS-level extras (clipboard image/file, screenshot express, lid guard, WeChat bot) stay desktop-only. For LAN access run `FANBOX_LAN=1 node server.js`: a random 12-char password is generated into `~/.fanbox/webpass`, remote logins are required (30-day sliding session), loopback stays password-free.
-
+Open `http://localhost:4567`. The full web version shares the desktop's UI and core (`pty-core.js`): embedded terminal, file watching, editors, session recording and the agent control API all work — only OS-level extras (clipboard image/file, screenshot express, lid guard, WeChat bot) stay desktop-only. For LAN access run `FANBOX_LAN=1 node server.js` or flip the toggle in the sidebar's 网页版 card (takes effect immediately). No password by design — enable only on trusted networks (home Wi-Fi / your own Tailscale).
 ### Linux（fork 支持，官方路线）/ Linux (fork support)
 
 桌面版与网页版均支持主流 glibc 发行版（Ubuntu/Debian/Arch 冒烟验证）。Linux 平台差异：
