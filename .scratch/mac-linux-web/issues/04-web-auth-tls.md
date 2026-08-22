@@ -1,7 +1,7 @@
 # 網頁版認證與傳輸安全設計
 
 Type: grilling
-Status: open
+Status: claimed
 Blocked by: 01
 
 ## Question
