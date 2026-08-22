@@ -1,7 +1,7 @@
 # Linux 防休眠 / 合蓋續跑機制
 
 Type: grilling
-Status: open
+Status: claimed
 Blocked by: —
 
 ## Question
