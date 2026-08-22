@@ -36,6 +36,7 @@ Charting 期間用戶已拍板的決策(不再重開):
 - [Linux v1 功能降級矩陣](issues/06-linux-degrade-matrix.md):全走推薦 — 縮圖平台分派(ffmpeg/pdftoppm)、探測走 $SHELL、pty/wechat fallback 補 /bin/bash、mdfind 降級接受、app 探測掃 .desktop。= Linux v1 修補規格,可移交實作。詳見 ticket Answer
 - [打包與發布矩陣確認](issues/09-packaging-matrix.md):fork repo = botio/fanbox;AppImage+deb + 未簽名 arm64 dmg;GH Actions 建置;品牌/圖示沿用;版本續號 2.14.0(updater 零改動);main.js 三處 URL 抽 `FORK_REPO` 常數;Linux 更新走發布頁。詳見 ticket Answer
 - [網頁版功能邊界矩陣](issues/03-web-function-boundary.md):網頁完整版 — 編輯器(/api/write)、檔案監聽(chokidar)、拖放存盤「進」;截圖/通知/剪貼板「降級」;錄影「進,排後」;ClawBot「不搬」。詳見 ticket Answer
+- [網頁版 PTY 與檔案事件傳輸通道](issues/05-web-pty-transport.md):WebSocket(ws 依賴)單一連線 + 訊框 type;session 歸 server、30 分鐘回收;同源 cookie + Origin 校驗;pty 管理抽 shared module。shim 契約 = preload 同介面,app.js 零改動。詳見 ticket Answer
 
 ## Not yet specified
 
