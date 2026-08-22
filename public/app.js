@@ -2318,7 +2318,7 @@ async function loadAgentProjects() {
   loadAgentProjects._sig = sig;
   const ul = $('#agent-projects-list');
   ul.innerHTML = '';
-  if (!list.length) { ul.innerHTML = '<div class="nav-empty">用 Claude Code / Codex 跑过的项目会出现在这里</div>'; return; }
+  if (!list.length) { ul.innerHTML = '<div class="nav-empty">用 Claude Code / Codex / pi / Hermes 跑过的项目会出现在这里</div>'; return; }
   list.forEach((pj) => {
     const li = navDirLi(pj.name, pj.path);
     li.querySelector('.label').title = `${pj.path}\n${pj.agents.join(' + ')} · ${agoShort(pj.lastActive)}前活跃`;

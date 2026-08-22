@@ -157,6 +157,8 @@ kbd {
 .agent-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--text-faint); }
 .agent-dot.claude { background: #d97757; }
 .agent-dot.codex { background: #10a37f; }
+.agent-dot.pi { background: #8f7bff; }
+.agent-dot.hermes { background: #3b82f6; }
 .brand .logo { color: var(--accent); }
 /* ---------- Skills 透视入口（侧栏底部工具簇）---------- */
 #skills-entry { margin-top: auto; padding: 12px 16px 0; border-top: 1px solid var(--border); cursor: pointer; user-select: none; }

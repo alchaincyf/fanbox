@@ -1731,6 +1731,8 @@ function readBody(req) {
 // Codex：~/.codex/sessions/**/rollout-*.jsonl 的 token_count 事件带 rate_limits（5h 窗口/周配额百分比，官方数）→ tail 取最新快照
 const CLAUDE_PROJ = path.join(HOME, '.claude', 'projects');
 const CODEX_SESS = path.join(HOME, '.codex', 'sessions');
+const PI_SESS = path.join(HOME, '.pi', 'agent', 'sessions');       // pi：sessions/<项目目录>/<时间戳>.jsonl
+const HERMES_TERM = path.join(HOME, '.hermes', 'terminal-sessions'); // Hermes：tty-* 单行 JSON 自带 cwd
 const claudeFileCache = new Map(); // file -> { offset, lastMsgId, events: [{t, in, out, cc, cr}] }
 let usageResultCache = { at: 0, data: null };
 
@@ -1973,6 +1975,44 @@ async function agentProjects(force = false) {
       try { add(await readCwdFromHead(f.fp, 16384), f.mtimeMs, 'codex'); } catch { /* */ }
     }));
   } catch { /* 没用过 Codex */ }
+  // pi：~/.pi/agent/sessions/<项目目录>/<时间戳>_<uuid>.jsonl，会话头行自带 cwd（同款正则可抓）
+  try {
+    const files = [];
+    const walk = async (dir, depth) => {
+      let names;
+      try { names = await fsp.readdir(dir, { withFileTypes: true }); } catch { return; }
+      for (const n of names) {
+        const fp = path.join(dir, n.name);
+        if (n.isDirectory() && depth < 2) await walk(fp, depth + 1);
+        else if (n.isFile() && n.name.endsWith('.jsonl')) {
+          try { const st = await fsp.stat(fp); if (st.mtimeMs >= cutoff) files.push({ fp, mtimeMs: st.mtimeMs }); } catch { /* */ }
+        }
+      }
+    };
+    await walk(PI_SESS, 0);
+    files.sort((a, b) => b.mtimeMs - a.mtimeMs);
+    await Promise.all(files.slice(0, 40).map(async (f) => {
+      try { add(await readCwdFromHead(f.fp, 16384), f.mtimeMs, 'pi'); } catch { /* */ }
+    }));
+  } catch { /* 没用过 pi */ }
+  // Hermes Agent：terminal-sessions/tty-* 是「哪个 tty 在哪个目录跑 hermes」的现势记录，单行 JSON 自带 cwd + ts
+  try {
+    const names = await fsp.readdir(HERMES_TERM);
+    await Promise.all(names.map(async (n) => {
+      try {
+        const fp = path.join(HERMES_TERM, n);
+        const st = await fsp.stat(fp);
+        if (!st.isFile() || st.mtimeMs < cutoff) return;
+        const txt = await fsp.readFile(fp, 'utf8');
+        for (const ln of txt.split('\n')) {
+          try {
+            const j = JSON.parse(ln);
+            if (j.cwd) add(j.cwd, Math.max(j.ts ? j.ts * 1000 : 0, st.mtimeMs), 'hermes');
+          } catch { /* 半行/空行跳过 */ }
+        }
+      } catch { /* */ }
+    }));
+  } catch { /* 没用过 Hermes */ }
   // 按最近活跃排序，已被删除的项目目录剔掉
   const sorted = [...map.entries()].sort((a, b) => b[1].lastActive - a[1].lastActive);
   const projects = [];
