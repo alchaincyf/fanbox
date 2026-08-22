@@ -1,7 +1,7 @@
 # 網頁版功能邊界矩陣
 
 Type: grilling
-Status: open
+Status: claimed
 Blocked by: 01
 
 ## Question
