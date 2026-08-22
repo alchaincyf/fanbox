@@ -1736,6 +1736,101 @@ const HERMES_TERM = path.join(HOME, '.hermes', 'terminal-sessions'); // Hermes�
 const claudeFileCache = new Map(); // file -> { offset, lastMsgId, events: [{t, in, out, cc, cr}] }
 let usageResultCache = { at: 0, data: null };
 
+// ---------- pi / Hermes 的本地 token 统计（与 Claude 同款三桶：近5h / 今日 / 本周）----------
+// pi：会话 JSONL 里 role=assistant 的行自带 usage（input/output/cacheRead/cacheWrite/reasoning）
+const piFileCache = new Map(); // file -> { offset, lastRespId, events: [{t,in,out,cc,cr}] }
+async function parsePiFile(file, stat) {
+  let c = piFileCache.get(file);
+  if (!c) { c = { offset: 0, lastRespId: '', events: [] }; piFileCache.set(file, c); }
+  if (stat.size < c.offset) { c.offset = 0; c.lastRespId = ''; c.events = []; }
+  if (stat.size === c.offset) return c.events;
+  const fh = await fsp.open(file, 'r');
+  let chunk;
+  try {
+    const len = stat.size - c.offset;
+    const buf = Buffer.alloc(len);
+    await fh.read(buf, 0, len, c.offset);
+    chunk = buf.toString('utf8');
+  } finally { await fh.close(); }
+  const lastNL = chunk.lastIndexOf('\n');
+  if (lastNL === -1) return c.events;
+  c.offset += Buffer.byteLength(chunk.slice(0, lastNL + 1), 'utf8');
+  for (const line of chunk.slice(0, lastNL).split('\n')) {
+    if (!line.includes('"usage"') || !line.includes('"assistant"')) continue;
+    let d; try { d = JSON.parse(line); } catch { continue; }
+    const m = d && d.message;
+    const u = m && m.usage;
+    if (!u || m.role !== 'assistant') continue;
+    if (u.input == null && u.output == null) continue;
+    if (u.outputTokens != null && u.inputTokens == null && !('input' in u)) continue; // 异形 usage 不认
+    if (d.responseId && d.responseId === c.lastRespId) continue; // 重放/续写同一响应：只记一次
+    if (d.responseId) c.lastRespId = d.responseId;
+    const t = Date.parse(d.timestamp || '') || stat.mtimeMs;
+    c.events.push({ t, in: u.input || 0, out: (u.output || 0) + (u.reasoning || 0), cc: u.cacheWrite || 0, cr: u.cacheRead || 0 });
+  }
+  return c.events;
+}
+// 三桶聚合器：claude 的内联逻辑抽出来共用（claudeUsage 原样不动，新来源走这里）
+function bucketEvents(events) {
+  const now = Date.now();
+  const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
+  const mk = () => ({ total: 0, input: 0, output: 0, cacheRead: 0, cacheCreate: 0, msgs: 0 });
+  const last5h = mk(), today = mk(), week = mk();
+  for (const e of events) {
+    const tot = e.in + e.out + e.cc + e.cr;
+    for (const [b, from] of [[last5h, now - 5 * 3600000], [today, dayStart.getTime()], [week, now - 7 * 86400000]]) {
+      if (e.t >= from) { b.total += tot; b.input += e.in; b.output += e.out; b.cacheRead += e.cr; b.cacheCreate += e.cc; b.msgs++; }
+    }
+  }
+  return { last5h, today, week };
+}
+async function piUsage() {
+  const cutoff = Date.now() - 8 * 86400000;
+  const files = [];
+  const walk = async (dir, depth) => {
+    let names;
+    try { names = await fsp.readdir(dir, { withFileTypes: true }); } catch { return; }
+    for (const n of names) {
+      const fp = path.join(dir, n.name);
+      if (n.isDirectory() && depth < 2) await walk(fp, depth + 1);
+      else if (n.isFile() && n.name.endsWith('.jsonl')) {
+        try { const st = await fsp.stat(fp); if (st.mtimeMs >= cutoff) files.push({ fp, st }); } catch { /* */ }
+      }
+    }
+  };
+  await walk(PI_SESS, 0);
+  if (!files.length) return null;
+  const live = new Set(files.map((f) => f.fp));
+  for (const k of piFileCache.keys()) { if (!live.has(k)) piFileCache.delete(k); }
+  const all = [];
+  for (const { fp, st } of files) { try { all.push(...await parsePiFile(fp, st)); } catch { /* 单文件坏不挡整体 */ } }
+  return all.length ? bucketEvents(all) : null;
+}
+// Hermes：state.db（SQLite）sessions 表自带每会话 token 合计。node:sqlite 是 Node≥22.5 内置，
+// Electron 33 内置 Node 20 没有它 → 桌面版优雅降级为不显示 Hermes 一栏，网页版可用。
+let hermesDb = undefined;
+function hermesOpen() {
+  if (hermesDb !== undefined) return hermesDb;
+  try {
+    const { DatabaseSync } = require('node:sqlite');
+    hermesDb = new DatabaseSync(path.join(HOME, '.hermes', 'state.db'), { readOnly: true });
+  } catch { hermesDb = null; } // 没有 node:sqlite / 没装 Hermes / 库损坏：都不致命
+  return hermesDb;
+}
+function hermesUsage() {
+  const db = hermesOpen();
+  if (!db) return null;
+  try {
+    const rows = db.prepare('select started_at, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens from sessions where started_at >= ?').all((Date.now() - 8 * 86400000) / 1000);
+    if (!rows.length) return null;
+    const events = rows.filter((r) => r.started_at != null).map((r) => ({
+      t: r.started_at * 1000,
+      in: r.input_tokens || 0, out: r.output_tokens || 0, cc: r.cache_write_tokens || 0, cr: r.cache_read_tokens || 0,
+    }));
+    return events.length ? bucketEvents(events) : null;
+  } catch { return null; }
+}
+
 async function parseClaudeFile(file, stat) {
   let c = claudeFileCache.get(file);
   if (!c) { c = { offset: 0, lastMsgId: '', events: [] }; claudeFileCache.set(file, c); }
@@ -2366,13 +2461,15 @@ async function builtinSkillInstall(id) {
 
 async function agentUsage() {
   if (usageResultCache.data && Date.now() - usageResultCache.at < 30000) return usageResultCache.data;
-  const [claude, codex, claudeLimits] = await Promise.all([
+  const [claude, codex, claudeLimits, pi, hermes] = await Promise.all([
     claudeUsage().catch(() => null),
     codexUsage().catch(() => null),
     claudeOfficialLimits().catch(() => null),
+    piUsage().catch(() => null),
+    Promise.resolve(hermesUsage()).catch(() => null), // 同步函数，包一层统一 await
   ]);
   const claudeOut = (claude || claudeLimits) ? { ...(claude || {}), official: claudeLimits } : null;
-  const data = { ok: true, at: Date.now(), claude: claudeOut, codex };
+  const data = { ok: true, at: Date.now(), claude: claudeOut, codex, pi, hermes };
   usageResultCache = { at: Date.now(), data };
   return data;
 }
@@ -2438,7 +2535,7 @@ function cronNext(expr, fromMs) {
     cronField(parts[3], 1, 12), cronField(parts[4], 0, 6),
   ];
   if ([fMin, fHour, fDom, fMon, fDow].some((f) => f === undefined)) return undefined;
-  // 经典 cron 语义：日、周都有限定时，任一命中即可
+  // 经典 cron 语义：日、周都有限时时，任一命中即可
   const dayOk = (d) => {
     const dom = !fDom || fDom.has(d.getDate());
     const dow = !fDow || fDow.has(d.getDay());

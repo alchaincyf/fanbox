@@ -4394,7 +4394,19 @@ const usagePanel = {
         <div class="usage-sub">token 总量 · 本地会话日志统计</div>`;
       }
     }
-    if (!d.codex && !d.claude) h = '<div class="usage-sub">没找到 Claude Code / Codex 的本机会话记录</div>';
+    // pi / Hermes：与 Claude 同款三桶本地统计（无官方限额接口，只报 token 量）
+    for (const [key, label] of [['pi', 'pi'], ['hermes', 'Hermes Agent']]) {
+      const u = d[key];
+      if (!u || !u.last5h) continue;
+      h += `<div class="usage-agent">${label}</div>
+        <div class="usage-trio">
+          <span><b>${this.fmtTok(u.last5h.total)}</b>近5h</span>
+          <span><b>${this.fmtTok(u.today.total)}</b>今日</span>
+          <span><b>${this.fmtTok(u.week.total)}</b>本周</span>
+        </div>
+        <div class="usage-sub">token 总量 · 本地会话日志统计</div>`;
+    }
+    if (!d.codex && !d.claude && !d.pi && !d.hermes) h = '<div class="usage-sub">没找到 Claude Code / Codex / pi / Hermes 的本机会话记录</div>';
     box.innerHTML = h;
   },
   async refresh() {
