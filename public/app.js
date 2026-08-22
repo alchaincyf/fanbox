@@ -173,15 +173,19 @@
       const lanOn = $('#web-lan-sw');
       if (lanOn) lanOn.onclick = async () => {
         const r = await jpost('/api/web/lan', { on: true });
-        toast(r && r.ok ? '已开启，重启服务后手机可经局域网访问' : '开启失败' + (r && r.error ? '：' + r.error : ''), !(r && r.ok));
-        if (r && r.ok) this.st.lanMode = true;
+        if (r && r.ok) {
+          this.st.lanMode = true; this.st.addresses = r.addresses || [];
+          toast('已开启局域网访问，手机可连同一 Wi-Fi 打开 ' + (r.addresses && r.addresses[0] ? r.addresses[0].replace(/^http:\/\//, '') : ''));
+        } else toast('开启失败' + (r && r.error ? '：' + r.error : ''), true);
         this.render();
       };
       const lanOff = $('#web-lan-off');
       if (lanOff) lanOff.onclick = async () => {
         const r = await jpost('/api/web/lan', { on: false });
-        toast(r && r.ok ? '已关闭，重启服务后回到仅本机可访问' : '关闭失败', !(r && r.ok));
-      };
+        if (r && r.ok) { this.st.lanMode = false; this.st.addresses = []; toast('已关闭局域网访问'); }
+        else toast('关闭失败', true);
+        this.render();
+      }
       const out = $('#web-logout');
       if (out) out.onclick = async () => { await jpost('/api/web/logout', {}); location.reload(); };
     },

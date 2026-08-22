@@ -2761,6 +2761,11 @@ function changelogData() {
     for (const ip of lanAddresses()) ALLOWED_HOSTS.add(ip);
     if (!WEBPASS) { WEBPASS = crypto.randomBytes(9).toString('base64url').slice(0, 12); saveWebpass(WEBPASS); }
   }
+  function logLan() {
+    if (!(WEB_MODE && LAN_MODE)) return;
+    console.log('  📡  局域网:  ' + lanAddresses().map((ip) => `http://${ip}:${PORT}`).join('、'));
+    console.log(`  🔑  访问密码: ${WEBPASS ? CONFIG_DIR + '/webpass（设置页可改）' : '（未生成）'}`);
+  }
   if (WEB_MODE && process.env.FANBOX_LAN === '1') enableLan(); // env 开关：启动即生效
 
   async function lanFromConfig() { // 设置页开关：listen 前读一次 config，重启生效
@@ -3061,7 +3066,6 @@ const server = http.createServer(async (req, res) => {
       return sendJSON(res, 404, { ok: false, error: 'unknown agent endpoint' });
     }
 
-    // ---------- 网页版专属路由（桌面版这些能力走 preload 桥，不进这里）----------
     if (p === '/api/web/whoami') {
       return sendJSON(res, 200, {
         ok: true, lanMode: LAN_MODE,
@@ -3074,9 +3078,13 @@ const server = http.createServer(async (req, res) => {
       if (!isLoopbackReq(req)) return sendJSON(res, 403, { ok: false, error: '只能在本机（localhost）更改此设置' });
       const b = await readBody(req);
       const on = !!b.on;
-      if (on && !LAN_MODE) enableLan(); // 立即生成密码，用户马上能在设置页看到
+      if (on && !LAN_MODE) enableLan();
+      else if (!on && LAN_MODE) LAN_MODE = false; // 关闭：webpass 留着不删，下次开免得重新分发
       try { await updateConfig((cfg) => { cfg.lanMode = on; }); } catch (e) { return sendJSON(res, 500, { ok: false, error: e.message }); }
-      return sendJSON(res, 200, { ok: true, lanMode: LAN_MODE, needsRestart: true });
+      const addresses = LAN_MODE ? lanAddresses().map((ip) => `http://${ip}:${PORT}`) : [];
+      sendJSON(res, 200, { ok: true, lanMode: LAN_MODE, needsRestart: false, addresses });
+      setTimeout(() => bindServer(), 50); // 让响应先走完再热换绑（换绑会掐掉 keep-alive 连接）
+      return;
     }
     if (p === '/api/web/login' && req.method === 'POST') {
       const ip = req.socket.remoteAddress || '?';
@@ -3216,23 +3224,50 @@ const previewServer = http.createServer(async (req, res) => {
 previewServer.on('error', (err) => { console.error('  ⚠️  预览服务器启动失败：', err.message); });
 previewServer.listen(PREVIEW_PORT, '127.0.0.1', () => { console.log(`  🖼  预览源（隔离）：http://localhost:${PREVIEW_PORT}`); });
 
-(async () => { // listen 前补读设置页的 LAN 开关（config lanMode），绑定地址才算得准
+// ---------- 绑定地址管理：启动与设置页开关共用，支持运行时热换绑 ----------
+function bindHost() {
+  return WEB_MODE ? (process.env.FANBOX_HOST || (LAN_MODE ? '0.0.0.0' : '127.0.0.1')) : '127.0.0.1';
+}
+let _bindHost = null, _rebinding = false, _bannerShown = false;
+function doBind(host) {
+  if (server.listening) return;
+  _bindHost = host;
+  server.listen(PORT, host, () => {
+    const link = `http://localhost:${PORT}`;
+    if (!_bannerShown) {
+      _bannerShown = true;
+      console.log('\n  📦  FanBox 已启动');
+      console.log(`  🔗  ${link}`);
+      console.log('  🏠  根目录:', HOME);
+      if (WEB_MODE && LAN_MODE) {
+        for (const ip of lanAddresses()) console.log(`  📡  局域网:  http://${ip}:${PORT}`);
+        console.log(`  🔑  访问密码: ${WEBPASS ? CONFIG_DIR + '/webpass（设置页可改）' : '（未生成）'}`);
+      }
+      console.log('\n  按 Ctrl+C 退出\n');
+      pruneThumbs().catch(() => {}); // 启动时裁剪缩略图缓存，防止无限增长
+      if (!process.env.FANBOX_NO_OPEN) {
+        const opener = PLATFORM === 'darwin' ? 'open' : PLATFORM === 'win32' ? 'start' : 'xdg-open';
+        exec(`${opener} ${link}`, () => {});
+      }
+    } else {
+      console.log(`  🔁  已重新绑定 ${host}`);
+      logLan();
+    }
+  });
+}
+function bindServer() {
+  const host = bindHost();
+  if (_rebinding || (_bindHost === host && server.listening)) return;
+  if (!server.listening) return doBind(host);
+  // 热换绑：掐掉空闲与 keep-alive 连接，close 回调立刻完成。升级成 WebSocket 的连接
+  // 不在 http 服务器的连接追踪表里，正在跑的终端不受影响。
+  _rebinding = true;
+  try { server.closeIdleConnections(); } catch { /* */ }
+  try { server.closeAllConnections(); } catch { /* */ }
+  server.close(() => { _rebinding = false; doBind(host); });
+  setTimeout(() => { if (_rebinding) { _rebinding = false; doBind(host); } }, 3000).unref(); // 兜底：极端挂起请求堵住 close 时强走
+}
+(async () => { // listen 前补读设置页的 LAN 开关（config lanMode），首次绑定才算得准
   await lanFromConfig();
-  const BIND_HOST = WEB_MODE ? (process.env.FANBOX_HOST || (LAN_MODE ? '0.0.0.0' : '127.0.0.1')) : '127.0.0.1';
-  server.listen(PORT, BIND_HOST, () => {
-  const link = `http://localhost:${PORT}`;
-  console.log('\n  📦  FanBox 已启动');
-  console.log(`  🔗  ${link}`);
-  console.log('  🏠  根目录:', HOME);
-  if (WEB_MODE && LAN_MODE) {
-    for (const ip of lanAddresses()) console.log(`  📡  局域网:  http://${ip}:${PORT}`);
-    console.log(`  🔑  访问密码: ${WEBPASS ? CONFIG_DIR + '/webpass（设置页可改）' : '（未生成）'}`);
-  }
-  console.log('\n  按 Ctrl+C 退出\n');
-  pruneThumbs().catch(() => {}); // 启动时裁剪缩略图缓存，防止无限增长
-  if (!process.env.FANBOX_NO_OPEN) {
-    const opener = PLATFORM === 'darwin' ? 'open' : PLATFORM === 'win32' ? 'start' : 'xdg-open';
-    exec(`${opener} ${link}`, () => {});
-  }
-});
+  bindServer();
 })();
