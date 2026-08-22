@@ -188,6 +188,17 @@ node server.js
 
 Open `http://localhost:4567`. Zero dependencies, zero build — clone and run. The web version covers browsing/search/preview (the embedded terminal and editors need Electron).
 
+### Linux（fork 支持，官方路线）/ Linux (fork support)
+
+桌面版与网页版均支持主流 glibc 发行版（Ubuntu/Debian/Arch 冒烟验证）。Linux 平台差异：
+
+- 缩略图依赖系统工具：图片/视频走 `ffmpeg`，PDF 走 `pdftoppm`（poppler-utils 包）；缺工具时优雅降级为矢量图标。
+- 全局同名搜索（macOS Spotlight 兜底）仅 macOS 可用，Linux 只搜已浏览的目录树。
+- 截图直通车 / 合盖防休眠为平台特有能力：Linux 截图走 inotify 常见截图目录，防休眠走 systemd-inhibit（GNOME 验证、KDE 冒烟）。
+- 内嵌终端 shell 依次取 `$SHELL` → `/bin/bash` → `/bin/sh`（macOS 默认 zsh 不变）。
+
+Desktop and web both run on mainstream glibc distros (Ubuntu/Debian/Arch smoke-tested). Linux notes: thumbnails need `ffmpeg` + `pdftoppm` (poppler-utils); global same-name search is macOS-only (Spotlight); screenshot express and lid-guard are platform-specific; the embedded terminal picks `$SHELL` → `/bin/bash` → `/bin/sh`.
+
 ### 开发模式 / Development
 
 ```bash

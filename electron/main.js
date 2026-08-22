@@ -9,6 +9,7 @@ const { app, BrowserWindow, ipcMain, shell, nativeImage, Menu, clipboard, dialog
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
+const { loginShell } = require('./platform');
 
 // 复用现有后端：require 即 listen 127.0.0.1:PORT，不自动开浏览器
 process.env.FANBOX_NO_OPEN = '1';
@@ -578,7 +579,7 @@ function recStop(id) {
 // ---------- 终端 IPC（node-pty）----------
 ipcMain.handle('pty:spawn', (e, { id, cwd, cols, rows, theme }) => {
   if (!pty) return { ok: false, error: 'node-pty 未编译，跑：npm run rebuild' };
-  const shellPath = process.env.SHELL || (process.platform === 'win32' ? 'powershell.exe' : '/bin/zsh');
+  const shellPath = loginShell();
   const startCwd = cwd && fs.existsSync(cwd) ? cwd : os.homedir();
   // login shell（-l）：GUI 启动的进程只继承精简 PATH，不读 .zprofile/.zlogin，
   // 用户在那里配的 Homebrew/nvm/npm 全局路径（claude 等）就丢了 → 「普通终端能找到、fanbox 找不到」。

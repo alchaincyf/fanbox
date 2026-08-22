@@ -5,10 +5,11 @@
 //   主：导入 shell 环境（覆盖各种 shell 的 .zshrc/.bash_profile/fish config，含代理/中转站/PATH/自定义变量）
 //   辅：导入后仍没有代理变量 → 读 macOS 系统代理（scutil --proxy，Clash 等都会写入）兜底，只补空缺不覆盖
 const { execFile } = require('child_process');
+const { loginShell } = require('../platform');
 
 let cached = null; // Promise<env 对象>，只算一次
 
-const userShell = () => process.env.SHELL || (process.platform === 'win32' ? 'powershell.exe' : '/bin/zsh');
+const userShell = () => loginShell();
 const PROXY_KEYS = ['https_proxy', 'HTTPS_PROXY', 'http_proxy', 'HTTP_PROXY', 'all_proxy', 'ALL_PROXY'];
 
 // 跑 `$SHELL -ilc 'env'` 抓交互式登录 shell 的完整环境变量（PATH/代理/BASE_URL 等）

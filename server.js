@@ -509,13 +509,41 @@ async function codexOrganizeFlags(bin) {
 }
 
 async function findAgentBin(name) {
-  // GUI 启动的 app 没有用户 shell 的 PATH，走登录 shell 找一次绝对路径
+  // GUI 启动的 app 没有用户 shell 的 PATH，走 login shell 找一次绝对路径。
+  // macOS 默认 zsh；Linux 未必装 zsh → 依序 $SHELL → /bin/bash → /bin/sh（见 electron/platform.js 同款逻辑）。
+  const shell = PLATFORM === 'win32' ? 'powershell.exe'
+    : process.env.SHELL || (PLATFORM === 'darwin' ? '/bin/zsh' : (fs.existsSync('/bin/bash') ? '/bin/bash' : '/bin/sh'));
   return new Promise((resolve) => {
-    execFile('/bin/zsh', ['-lc', `command -v ${name}`], { timeout: 8000 }, (err, stdout) => {
+    execFile(shell, ['-lc', `command -v ${name}`], { timeout: 8000 }, (err, stdout) => {
       const out = String(stdout || '').trim().split('\n').pop();
       resolve(!err && out && out.startsWith('/') ? out : null);
     });
   });
+}
+
+// Linux 桌面 app 探測：掃 freedesktop .desktop（系統 + 用戶兩層），比對 Name 或 Exec 基名（大小写不敏感）。
+// macOS 走 open -Ra；Windows 无此面。扫不到一律视为未装（与 open -Ra 失败的语义一致）。
+async function desktopAppExists(name) {
+  const want = String(name || '').toLowerCase();
+  const dirs = ['/usr/share/applications', path.join(os.homedir(), '.local/share/applications')];
+  if (process.env.XDG_DATA_HOME) dirs.push(path.join(process.env.XDG_DATA_HOME, 'applications'));
+  try {
+    for (const dir of dirs) {
+      let names;
+      try { names = await fsp.readdir(dir); } catch { continue; }
+      for (const f of names) {
+        if (!f.endsWith('.desktop')) continue;
+        let txt;
+        try { txt = await fsp.readFile(path.join(dir, f), 'utf8'); } catch { continue; }
+        if (/^(NoDisplay|Hidden)=true$/m.test(txt)) continue; // 隐藏入口不算「装了」
+        const nameMatch = /^Name=(.+)$/m.exec(txt);
+        const execMatch = /^Exec=(.+)$/m.exec(txt);
+        const base = execMatch ? path.basename(String(execMatch[1]).trim().split(/\s+/)[0]) : '';
+        if ((nameMatch && nameMatch[1].trim().toLowerCase() === want) || (base && base.toLowerCase() === want)) return true;
+      }
+    }
+  } catch { /* 扫描失败一律当没装 */ }
+  return false;
 }
 
 // 最近几次整理日志的一句话摘要，给 agent 当历史参照（日志由 agent 按 brief 约定写入）
@@ -1392,22 +1420,35 @@ const thumbInflight = new Map(); // cacheFile -> Promise，去重并发生成
 function run(cmd, args) {
   return new Promise((resolve, reject) => execFile(cmd, args, { timeout: 15000 }, (e) => (e ? reject(e) : resolve())));
 }
-// 图片走 sips 缩放（快）；视频/PDF/其它走 qlmanage QuickLook 抽帧
+// 图片走 sips 缩放（macOS 快）；视频/PDF/其它走 qlmanage QuickLook 抽帧（macOS）。
+// Linux（及非 mac）：sips/qlmanage 不存在 → 图片/视频统一 ffmpeg 缩放抽帧，PDF 走 pdftoppm；
+// 工具缺失（如无 HEIF 解码的 ffmpeg）时 run 抛错 → 上层 415，前端降级矢量图标。
 async function generateThumb(src, e, size, cacheFile, isImg) {
   await fsp.mkdir(THUMB_DIR, { recursive: true });
-  if (isImg) {
-    const fmt = cacheFile.endsWith('.png') ? 'png' : 'jpeg';
-    await run('sips', ['-s', 'format', fmt, '-Z', String(size), src, '--out', cacheFile]);
+  if (PLATFORM === 'darwin') {
+    if (isImg) {
+      const fmt = cacheFile.endsWith('.png') ? 'png' : 'jpeg';
+      await run('sips', ['-s', 'format', fmt, '-Z', String(size), src, '--out', cacheFile]);
+      return;
+    }
+    const tmpDir = path.join(THUMB_DIR, '_ql_' + process.pid + '_' + crypto.randomBytes(4).toString('hex'));
+    await fsp.mkdir(tmpDir, { recursive: true });
+    try {
+      await run('qlmanage', ['-t', '-s', String(size), '-o', tmpDir, src]);
+      const png = (await fsp.readdir(tmpDir)).find((f) => f.endsWith('.png'));
+      if (!png) throw new Error('no thumb');
+      await fsp.rename(path.join(tmpDir, png), cacheFile);
+    } finally { fsp.rm(tmpDir, { recursive: true, force: true }).catch(() => {}); }
     return;
   }
-  const tmpDir = path.join(THUMB_DIR, '_ql_' + process.pid + '_' + crypto.randomBytes(4).toString('hex'));
-  await fsp.mkdir(tmpDir, { recursive: true });
-  try {
-    await run('qlmanage', ['-t', '-s', String(size), '-o', tmpDir, src]);
-    const png = (await fsp.readdir(tmpDir)).find((f) => f.endsWith('.png'));
-    if (!png) throw new Error('no thumb');
-    await fsp.rename(path.join(tmpDir, png), cacheFile);
-  } finally { fsp.rm(tmpDir, { recursive: true, force: true }).catch(() => {}); }
+  // Linux / 其它：PDF 首帧走 pdftoppm（-singlefile 输出名 == 去扩展名的 base）；其余统一 ffmpeg 缩放抽帧。
+  // 输出格式由 cacheFile 后缀决定（透明图 .png → png 编码器，其余 .jpg → jpeg），与 darwin 语义一致。
+  if (e === 'pdf') {
+    await run('pdftoppm', ['-png', '-singlefile', '-scale-to', String(size), src, cacheFile.replace(/\.png$/i, '')]);
+    return;
+  }
+  const scale = `scale='min(iw,${size})':'min(ih,${size})':force_original_aspect_ratio=decrease`;
+  await run('ffmpeg', ['-y', '-loglevel', 'error', '-i', src, '-vf', scale, '-frames:v', '1', cacheFile]);
 }
 // 缩略图缓存按总体积上限做 LRU 裁剪（同一文件改一次就多一个缓存键，不清会无限涨）
 async function pruneThumbs(maxBytes = 400 * 1024 * 1024) {
@@ -1534,7 +1575,8 @@ async function serveThumb(req, res, p, size) {
   catch { res.writeHead(415); res.end('no thumb'); } // 前端 onerror 回退矢量图标
 }
 
-// HEIC/HEIF 浏览器与 Chromium 原生不支持：用 sips 全尺寸转码成 jpeg 缓存后再吐，
+// HEIC/HEIF 浏览器与 Chromium 原生不支持：macOS 用 sips 全尺寸转码成 jpeg 缓存后再吐，
+// Linux 尝试 ffmpeg（需 heif 解码器，多数发行版未编入 → 优雅 415）；
 // /api/raw 和 /fs/ 都透明走这条，markdown 里的 ![](x.heic) 预览即可显示。复用缩略图那套 run/缓存/LRU。
 const HEIC_EXT = new Set(['heic', 'heif']);
 async function serveHeicAsJpeg(req, res, file, st) {
@@ -1549,7 +1591,11 @@ async function serveHeicAsJpeg(req, res, file, st) {
   if (fs.existsSync(cacheFile)) return send();
   let pr = thumbInflight.get(cacheFile);
   if (!pr) {
-    pr = (async () => { await fsp.mkdir(THUMB_DIR, { recursive: true }); await run('sips', ['-s', 'format', 'jpeg', file, '--out', cacheFile]); })()
+    pr = (async () => {
+      await fsp.mkdir(THUMB_DIR, { recursive: true });
+      if (PLATFORM === 'darwin') await run('sips', ['-s', 'format', 'jpeg', file, '--out', cacheFile]);
+      else await run('ffmpeg', ['-y', '-loglevel', 'error', '-i', file, '-frames:v', '1', cacheFile]);
+    })()
       .finally(() => thumbInflight.delete(cacheFile));
     thumbInflight.set(cacheFile, pr);
   }
@@ -2686,9 +2732,16 @@ const server = http.createServer(async (req, res) => {
         .map((s) => s.trim()).filter((s) => /^[\w .-]{1,64}$/.test(s)).slice(0, 32);
       await Promise.all([
         ...bins.map(async (b) => { out[b] = !!(await findAgentBin(b)); }),
-        ...apps.map((a) => new Promise((resolve) => {
-          execFile('/usr/bin/open', ['-Ra', a], { timeout: 8000 }, (err) => { out[a] = !err; resolve(); });
-        })),
+        // apps：macOS 走 open -Ra；Linux/其它扫 .desktop（freedesktop 标准）
+        ...apps.map(async (a) => {
+          if (PLATFORM === 'darwin') {
+            out[a] = await new Promise((resolve) => {
+              execFile('/usr/bin/open', ['-Ra', a], { timeout: 8000 }, (err) => resolve(!err));
+            });
+          } else {
+            out[a] = await desktopAppExists(a);
+          }
+        }),
       ]);
       return sendJSON(res, 200, out);
     }

@@ -3,8 +3,7 @@
 // 复用本机已登录的 claude/codex 凭据，原生读 cwd 下的 CLAUDE.md / AGENTS.md。
 const { spawn } = require('child_process');
 const { fullEnv } = require('./env');
-
-const loginShell = () => process.env.SHELL || (process.platform === 'win32' ? 'powershell.exe' : '/bin/zsh');
+const { loginShell } = require('../platform');
 
 // 跑一条命令，prompt 写 stdin。env 复刻自用户的交互式登录 shell（见 env.js）：
 // 打包后从 Finder 启动会丢掉 PATH/代理/BASE_URL，这里补回来，子进程联网方式和用户终端一致。
