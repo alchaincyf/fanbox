@@ -184,9 +184,18 @@ I don't own a Windows machine and can't reliably verify a Windows build or judge
 node server.js
 ```
 
-浏览器打开 `http://localhost:4567`。零依赖、零 build，clone 下来就能跑。网页版只有文件浏览/搜索/预览（内嵌终端和编辑器靠 Electron 提供）。
+浏览器打开 `http://localhost:4567`。网页完整版 = 桌面版同一份界面与底层（`pty-core.js`）：内嵌终端、文件监听、编辑器、终端录像、Agent 控制接口全部可用，只差桌面专属的系统级能力（剪贴板图片/文件、截图直通车、防休眠、微信 ClawBot）。
 
-Open `http://localhost:4567`. Zero dependencies, zero build — clone and run. The web version covers browsing/search/preview (the embedded terminal and editors need Electron).
+**局域网访问（手机/平板开 FanBox）**：
+
+```bash
+FANBOX_LAN=1 node server.js     # 首次自动生成 12 位随机密码，存 ~/.fanbox/webpass
+```
+
+- 启动横幅打印局域网地址（如 `http://192.168.x.x:4567`），手机连同一 Wi-Fi 即可打开。
+- 明文 HTTP + 密码的取舍与设计细节见 `.scratch/mac-linux-web/issues/04-web-auth-tls.md`；浏览器全断 30 分钟后自动回收终端会话。
+- 密码可在侧栏「网页版」卡查看/修改；单 IP 连错 5 次锁 5 分钟。
+Open `http://localhost:4567`. The full web version shares the desktop's UI and core (`pty-core.js`): embedded terminal, file watching, editors, session recording and the agent control API all work — only OS-level extras (clipboard image/file, screenshot express, lid guard, WeChat bot) stay desktop-only. For LAN access run `FANBOX_LAN=1 node server.js`: a random 12-char password is generated into `~/.fanbox/webpass`, remote logins are required (30-day sliding session), loopback stays password-free.
 
 ### Linux（fork 支持，官方路线）/ Linux (fork support)
 
