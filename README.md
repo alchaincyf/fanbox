@@ -10,8 +10,10 @@
 > *"AI spins up ten projects in an afternoon. FanBox helps you find them again."*
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Release](https://img.shields.io/github/v/release/alchaincyf/fanbox?label=Release&color=blue)](https://github.com/alchaincyf/fanbox/releases/latest)
-[![Platform](https://img.shields.io/badge/macOS-Apple%20Silicon-black?logo=apple)](https://github.com/alchaincyf/fanbox/releases/latest)
+[![Release](https://img.shields.io/github/v/release/botio/fanbox?label=Release&color=blue)](https://github.com/botio/fanbox/releases/latest)
+[![Platform](https://img.shields.io/badge/macOS-Apple%20Silicon-black?logo=apple)](https://github.com/botio/fanbox/releases/latest)
+[![Linux](https://img.shields.io/badge/Linux-fork%20official-yellow?logo=linux)](#fork-updates)
+[![Web](https://img.shields.io/badge/Web-%E7%BD%91%E9%A1%B5%E5%AE%8C%E6%95%B4%E7%89%88-blueviolet)](#fork-updates)
 [![Windows](https://img.shields.io/badge/Windows-community%20port-lightgrey?logo=windows)](#install)
 [![Runtime](https://img.shields.io/badge/Runtime-no--build-blueviolet)](#architecture)
 
@@ -30,11 +32,9 @@ Every time the agent writes a file, its card lights up — *find files → run a
 
 <br>
 
-[⬇ 下载 dmg / Download dmg](https://github.com/alchaincyf/fanbox/releases/latest) · [Screenshots / 截图](#three-skins) · [Features / 功能](#what-it-does) · [Install / 安装](#install) · [Credits / 致谢](#credits)
+[⬇ 下载 Releases / Download](https://github.com/botio/fanbox/releases/latest) · [Fork 更新内容 / What's new](#fork-updates) · [Screenshots / 截图](#three-skins) · [Features / 功能](#what-it-does) · [Install / 安装](#install) · [Credits / 致谢](#credits)
 
 </div>
-
----
 
 <p align="center">
   <img src="assets/screenshot-volt.png" alt="FanBox · Volt skin · file browser on the left, README preview at the bottom, embedded terminal on the right" width="100%">
@@ -111,10 +111,10 @@ The UI was designed with [huashu-design](https://github.com/alchaincyf/huashu-de
   AI proposes a cleanup plan from metadata only (it never reads content or touches the filesystem); you approve each move; FanBox executes with a rollback log and one-click undo. Engine selectable (Claude Code / Codex), strategy prompt fully editable.
 - **发版向导 / Release wizard** — node 项目一键串起版本号、CHANGELOG、打包、推送、GitHub Release，整条命令序列在内嵌终端可见地跑。  
   For node projects: version bump, CHANGELOG promotion, build, push and GitHub Release composed into one command sequence that runs visibly in the embedded terminal.
-- **Skills 透视 / Skills X-ray** — 本机全部 agent skills 一个视图：触发统计、健康检查、context 预算、不删文件的启停开关。  
-  Every agent skill on your machine in one view: trigger statistics, health checks (description truncation, missing frontmatter), context budget, enable/disable without deleting.
-- **Agent 用量 / Agent usage** — Claude Code 官方 5h 窗口/周配额（和 `/usage` 同源）+ 本地 token 统计；Codex 限额快照 + 窗口重置识别。  
-  Claude Code official 5h window / weekly quota (same source as `/usage`) plus local token statistics; Codex window snapshots with reset detection.
+- **Skills 透视 / Skills X-ray** — 本机全部 agent skills 一个视图：触发统计、健康检查、context 预算、不删文件的启停开关；已接入 **Claude Code / Codex / pi / Hermes** 四家来源（Hermes 启停走其原生 config 名单）。  
+  Every agent skill on your machine in one view: trigger statistics, health checks, context budget, enable/disable without deleting — now covering Claude Code, Codex, **pi and Hermes** (Hermes toggles write its native config allowlist).
+- **Agent 用量 / Agent usage** — Claude Code 官方 5h 窗口/周配额（和 `/usage` 同源）+ 本地 token 统计；Codex 限额快照 + 窗口重置识别；**pi / Hermes** 本地 token 统计同屏呈现。  
+  Claude Code official 5h window / weekly quota plus local token statistics; Codex window snapshots with reset detection; pi & Hermes local token stats shown side by side.
 - **磁盘占用透视 / Disk usage lens** — `du` 口径的真实占用条形榜，可下钻，专治「电脑空间又满了」。  
   `du`-accurate bars per folder, drill-down, for the "my disk is full again" moments.
 
@@ -148,14 +148,30 @@ The UI was designed with [huashu-design](https://github.com/alchaincyf/huashu-de
 - **未保存守卫 / Unsaved guard** — 三种编辑器统一拦截未保存退出，Esc 旁路也堵死。  
   All three editors intercept unsaved exits, including the Esc bypass.
 
+<a id="fork-updates"></a>
+
+## Fork 更新内容 · What's new in this fork
+
+本 fork（botio/fanbox）在上游基础上持续演进，四大方向：
+
+- **Linux 官方支持**：缩略图平台分派（ffmpeg + pdftoppm）、shell 探测（`$SHELL` → bash → sh）、防休眠走 `systemd-inhibit` 用户层**零提权**（agent 干活才生效，收工自动恢复）、截图直通车监听 XDG 截图目录；AppImage + deb 打包，GitHub Actions 自动构建。
+- **网页完整版**：浏览器直跑 `node server.js` 即得与桌面同一份底层（共享核心 `pty-core.js`）——内嵌终端走 WebSocket、文件监听、编辑器、终端录像、agent 控制接口全部可用；局域网开关即时生效，手机 / Tailscale 直接访问，无密码设计。
+- **pi 与 Hermes Agent 深度接入**：「Agent 项目」「Agent 用量」「Skills 透视」三处同时识别两家 CLI——项目列表扫会话记录、用量面板解析各自日志/数据库、Skills 触发统计与原生启停对齐各家机制。
+- **x86_64 构建**：`npm run dist:x64` 一键出 Intel 包（node-pty 交叉编译已处理）。
+
+逐条明细见 [CHANGELOG](CHANGELOG.md)。
+
+This fork keeps shipping on top of upstream: first-class Linux support (platform thumbnails, shell detection, zero-privilege lid guard via systemd-inhibit, screenshot express watching XDG picture dirs; AppImage/deb + GitHub Actions), a **full web version** sharing the desktop core (`pty-core.js`) — embedded terminal over WebSocket, file watching, recording, agent control, instant LAN toggle for phone/Tailscale — deep **pi & Hermes Agent** integration across the projects/usage/skills views, and x86_64 packaging. Details in [CHANGELOG](CHANGELOG.md).
+
+
 <a id="install"></a>
 ## Install · 安装
 
 ### 桌面版（推荐）/ Desktop (recommended)
 
-从 [**Releases**](https://github.com/alchaincyf/fanbox/releases/latest) 下载最新 `.dmg`，拖进「应用程序」即可。Apple Silicon (arm64) 原生。
+从 [**Releases**](https://github.com/botio/fanbox/releases/latest) 下载：macOS 拿 `.dmg` 拖进「应用程序」（Apple Silicon arm64 原生）；Linux 拿 `.AppImage`（`chmod +x` 直接跑）或 `.deb` 安装。
 
-Download the latest `.dmg` from [**Releases**](https://github.com/alchaincyf/fanbox/releases/latest) and drag it into Applications. Native Apple Silicon (arm64).
+Grab from [**Releases**](https://github.com/botio/fanbox/releases/latest): macOS `.dmg` → drag into Applications (native Apple Silicon arm64); Linux `.AppImage` (chmod +x and run) or `.deb`.
 
 > 已用 Developer ID 证书签名 + hardened runtime，并通过 Apple 公证（notarization），**双击直接打开**，不用右键。  
 > Signed with a Developer ID certificate + hardened runtime and notarized by Apple — **just double-click to open**, no right-click workaround needed.
