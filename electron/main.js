@@ -137,44 +137,61 @@ app.whenReady().then(() => {
 });
 
 // ---------- 截图直通车：监听系统截屏落盘，新截图推给渲染层浮出直通卡 ----------
-function screenshotDir() {
+// macOS：读 screencapture 自定义目录（默认桌面）；Linux：XDG 图片目录 + Screenshots 子目录
+const SHOT_NAME_RE = /^(截屏|截圖|截图|Screenshot|Screen Shot|CleanShot|SCR-|screenshot[_-]|flameshot)/i;
+const isShotName = (name) => SHOT_NAME_RE.test(name) || /^\d{4}-\d{2}-\d{2}[_.-]/i.test(name); // grim/hyprshot 常用日期前缀命名
+function linuxShotDirs() {
+  let pictures = path.join(os.homedir(), 'Pictures');
   try {
-    const out = require('child_process').execSync('defaults read com.apple.screencapture location 2>/dev/null', { encoding: 'utf8' }).trim();
-    if (out) return out.startsWith('~') ? path.join(os.homedir(), out.slice(1)) : out;
-  } catch { /* 未自定义 → 默认桌面 */ }
-  return path.join(os.homedir(), 'Desktop');
+    const ud = fs.readFileSync(path.join(os.homedir(), '.config', 'user-dirs.dirs'), 'utf8');
+    const m = ud.match(/XDG_PICTURES_DIR\s*=\s*"?\$HOME\/([^"\n]*)"?/);
+    if (m) pictures = path.join(os.homedir(), m[1].trim());
+  } catch { /* 无 user-dirs 配置就用默认 */ }
+  return [...new Set([path.join(pictures, 'Screenshots'), pictures])];
 }
 let shotWatcher = null;
+const shotWatchers = []; // Linux 多候选目录各挂一个
 const shotSent = new Map(); // path -> t，fs.watch 同一文件会连发多个事件，3s 内去重
 function startShotWatch() {
-  if (process.platform !== 'darwin' || shotWatcher) return;
-  const dir = screenshotDir();
-  if (!fs.existsSync(dir)) return;
-  try {
-    shotWatcher = fs.watch(dir, { persistent: false }, (evt, filename) => {
-      const name = filename ? filename.toString() : '';
-      // 截屏写盘有「.截屏xxx.png」点前缀的中间态，跳过；只认系统截屏的命名习惯
-      if (!/^(截屏|截圖|截图|Screenshot|Screen Shot|CleanShot|SCR-)/i.test(name) || !/\.(png|jpe?g)$/i.test(name)) return;
-      const fp = path.join(dir, name);
-      // 等写盘「真正完成」再通知：Retina 全屏截图有几 MB，固定等 600ms 可能文件还在写，
-      // 缩略图会拿到半截文件生成失败→裂图。改成轮询直到大小连续两次不变（最多 ~3s）。
-      const waitStable = (tries, lastSize) => {
-        fs.stat(fp, (err, st) => {
-          if (err || !st.isFile()) return;
-          if (st.size >= 1000 && st.size === lastSize) { // 大小稳定 = 写完
-            const last = shotSent.get(fp) || 0;
-            if (Date.now() - last < 3000) return;
-            shotSent.set(fp, Date.now());
-            if (shotSent.size > 50) { const k = shotSent.keys().next().value; shotSent.delete(k); }
-            if (win && !win.isDestroyed()) win.webContents.send('shot:new', { path: fp, name, size: st.size });
-            return;
-          }
-          if (tries > 0) setTimeout(() => waitStable(tries - 1, st.size), 250); // 还在涨，再等
-        });
-      };
-      setTimeout(() => waitStable(12, -1), 350);
-    });
-  } catch { /* 无权限等，静默放弃 */ }
+  if (shotWatcher || shotWatchers.length) return;
+  const watchOne = (dir, nameOk) => {
+    if (!fs.existsSync(dir)) return;
+    try {
+      const w = fs.watch(dir, { persistent: false }, (evt, filename) => {
+        const name = filename ? filename.toString() : '';
+        // 截屏写盘有「.xxx.png」点前缀的中间态，跳过；只认各家截屏工具的命名习惯
+        if (!nameOk(name) || !/\.(png|jpe?g)$/i.test(name)) return;
+        const fp = path.join(dir, name);
+        // 等写盘「真正完成」再通知：全屏截图有几 MB，固定延时可能还在写，
+        // 缩略图会拿到半截文件生成失败→裂图。改成轮询直到大小连续两次不变（最多 ~3s）。
+        const waitStable = (tries, lastSize) => {
+          fs.stat(fp, (err, st) => {
+            if (err || !st.isFile()) return;
+            if (st.size >= 1000 && st.size === lastSize) { // 大小稳定 = 写完
+              const last = shotSent.get(fp) || 0;
+              if (Date.now() - last < 3000) return;
+              shotSent.set(fp, Date.now());
+              if (shotSent.size > 50) { const k = shotSent.keys().next().value; shotSent.delete(k); }
+              if (win && !win.isDestroyed()) win.webContents.send('shot:new', { path: fp, name, size: st.size });
+              return;
+            }
+            if (tries > 0) setTimeout(() => waitStable(tries - 1, st.size), 250); // 还在涨，再等
+          });
+        };
+        setTimeout(() => waitStable(12, -1), 350);
+      });
+      if (process.platform === 'darwin') shotWatcher = w; else shotWatchers.push(w);
+    } catch { /* 无权限等，静默放弃 */ }
+  };
+  if (process.platform === 'darwin') {
+    try {
+      const out = require('child_process').execSync('defaults read com.apple.screencapture location 2>/dev/null', { encoding: 'utf8' }).trim();
+      const dir = out ? (out.startsWith('~') ? path.join(os.homedir(), out.slice(1)) : out) : path.join(os.homedir(), 'Desktop');
+      watchOne(dir, (name) => SHOT_NAME_RE.test(name));
+    } catch { /* */ }
+  } else if (process.platform === 'linux') {
+    for (const dir of linuxShotDirs()) watchOne(dir, isShotName);
+  }
 }
 
 // ---------- 更新检测：查 GitHub Releases，有新版本通知渲染层引导下载 ----------
