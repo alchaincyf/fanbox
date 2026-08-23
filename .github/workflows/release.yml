@@ -7,6 +7,10 @@ on:
     tags: ['v*']
   workflow_dispatch:
 
+# 发布步骤断需要 contents:write（softprops/action-gh-release 建 Release 挂产物）
+permissions:
+  contents: write
+
 jobs:
   linux:
     runs-on: ubuntu-latest
