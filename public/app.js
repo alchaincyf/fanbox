@@ -5711,7 +5711,7 @@ async function init() {
   await loadRoots();
   await loadFavorites();
   powerBar.init();
-  webSec.init(); // 网页版侧栏卡（桌面版里是空操作）
+  if (window.webSec) await window.webSec.init(); // 网页版侧栏卡（桌面版 shim 被守卫跳过、无 webSec）
   verInfo.init();
   cronPanel.syncBadge();
   loadAgentProjects();
