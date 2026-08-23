@@ -1813,27 +1813,51 @@ async function piUsage() {
   return all.length ? bucketEvents(all) : null;
 }
 // Hermes：state.db（SQLite）sessions 表自带每会话 token 合计。node:sqlite 是 Node≥22.5 内置，
-// Electron 33 内置 Node 20 没有它 → 桌面版优雅降级为不显示 Hermes 一栏，网页版可用。
+// Electron 33 内置 Node 20 没有它 → 桌面版退回 Hermes 自带 venv 的 python sqlite3（skills 启停同款
+// HERMES_PY，零新增依赖）；两者都不可用才降级为不显示 Hermes 一栏。
 let hermesDb = undefined;
+const HERMES_DB = path.join(HOME, '.hermes', 'state.db');
 function hermesOpen() {
   if (hermesDb !== undefined) return hermesDb;
   try {
     const { DatabaseSync } = require('node:sqlite');
-    hermesDb = new DatabaseSync(path.join(HOME, '.hermes', 'state.db'), { readOnly: true });
+    hermesDb = new DatabaseSync(HERMES_DB, { readOnly: true });
   } catch { hermesDb = null; } // 没有 node:sqlite / 没装 Hermes / 库损坏：都不致命
   return hermesDb;
 }
+// 无 node:sqlite 时的兜底：用 Hermes 自带 venv 的 python 只读查同一张表
+function hermesRowsPy() {
+  if (!fs.existsSync(HERMES_PY) || !fs.existsSync(HERMES_DB)) return null;
+  try {
+    const script = [
+      "import sqlite3, json, time, os",
+      "db = sqlite3.connect('file:' + os.path.expanduser('~/.hermes/state.db') + '?mode=ro', uri=True)",
+      "cut = time.time() - 8*86400",
+      "rows = db.execute('select started_at, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens from sessions where started_at >= ?', (cut,)).fetchall()",
+      "print(json.dumps(rows))",
+    ].join('\n');
+    return JSON.parse(require('child_process').execFileSync(HERMES_PY, ['-c', script], { timeout: 8000 }).toString());
+  } catch { return null; }
+}
+function usageEventsFromRows(rows) {
+  if (!Array.isArray(rows) || !rows.length) return null;
+  // node:sqlite 回物件、python sqlite3 回陣列：統一先正規化成 {t,in,out,cc,cr}
+  const events = rows.map((r) => {
+    const g = Array.isArray(r)
+      ? (i) => r[i]
+      : (i, k) => r[k];
+    const t = Array.isArray(r) ? r[0] : r.started_at;
+    if (t == null) return null;
+    return { t: t * 1000, in: g(1,'input_tokens') || 0, out: g(2,'output_tokens') || 0, cc: g(4,'cache_write_tokens') || 0, cr: g(3,'cache_read_tokens') || 0 };
+  }).filter(Boolean);
+  return events.length ? bucketEvents(events) : null;
+}
 function hermesUsage() {
   const db = hermesOpen();
-  if (!db) return null;
+  if (!db) return usageEventsFromRows(hermesRowsPy()); // 桌面版（无 node:sqlite）：python 兑底
   try {
     const rows = db.prepare('select started_at, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens from sessions where started_at >= ?').all((Date.now() - 8 * 86400000) / 1000);
-    if (!rows.length) return null;
-    const events = rows.filter((r) => r.started_at != null).map((r) => ({
-      t: r.started_at * 1000,
-      in: r.input_tokens || 0, out: r.output_tokens || 0, cc: r.cache_write_tokens || 0, cr: r.cache_read_tokens || 0,
-    }));
-    return events.length ? bucketEvents(events) : null;
+    return usageEventsFromRows(rows);
   } catch { return null; }
 }
 
