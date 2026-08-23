@@ -173,8 +173,8 @@ This fork keeps shipping on top of upstream: first-class Linux support (platform
 
 Grab from [**Releases**](https://github.com/botio/fanbox/releases/latest): macOS `.dmg` → drag into Applications (native Apple Silicon arm64); Linux `.AppImage` (chmod +x and run) or `.deb`.
 
-> 已用 Developer ID 证书签名 + hardened runtime，并通过 Apple 公证（notarization），**双击直接打开**，不用右键。  
-> Signed with a Developer ID certificate + hardened runtime and notarized by Apple — **just double-click to open**, no right-click workaround needed.
+> **macOS 首次启动**：本 fork 的 dmg 为未公证构建（Developer ID 升级前）。若提示「已损坏，无法打开」或无法验证开发者，在终端跑 `xattr -cr /Applications/FanBox.app`，或到 系统设置 → 隐私与安全性 点「仍要打开」。  
+> **macOS first launch**: the dmg is unsigned/notarization-pending. If macOS reports the app "damaged" or unverifiable, run `xattr -cr /Applications/FanBox.app` in Terminal, or open 系统设置 → 隐私与安全性 → "Open Anyway".
 >
 > 应用内置**更新提醒**：检测到 GitHub 上有新 Release 时，右下角会弹一条提示引导下载，不强更、可对单个版本「不再提醒」。  
 > Built-in **update notifications**: when a new release lands on GitHub, a capsule appears at the bottom right. Never forced; individual versions can be muted.

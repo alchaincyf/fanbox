@@ -59,7 +59,8 @@
     "deb": {
       "synopsis": "The cockpit for coding agents",
       "description": "Command Claude Code or Codex, watch every file and line they change, and take over anytime. File browser + integrated terminal + agent control panel."
-    }
+    },
+    "afterSign": "scripts/adhoc-sign-mac.js"
   },
   "type": "commonjs",
   "engines": {
