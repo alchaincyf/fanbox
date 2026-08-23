@@ -173,8 +173,13 @@ This fork keeps shipping on top of upstream: first-class Linux support (platform
 
 Grab from [**Releases**](https://github.com/botio/fanbox/releases/latest): macOS `.dmg` → drag into Applications (native Apple Silicon arm64); Linux `.AppImage` (chmod +x and run) or `.deb`.
 
-> **macOS 首次启动**：本 fork 的 dmg 为未公证构建（Developer ID 升级前）。若提示「已损坏，无法打开」或无法验证开发者，在终端跑 `xattr -cr /Applications/FanBox.app`，或到 系统设置 → 隐私与安全性 点「仍要打开」。  
-> **macOS first launch**: the dmg is unsigned/notarization-pending. If macOS reports the app "damaged" or unverifiable, run `xattr -cr /Applications/FanBox.app` in Terminal, or open 系统设置 → 隐私与安全性 → "Open Anyway".
+> **macOS 首次启动**：本 fork 的 dmg 为未公证构建（Developer ID 升级前），首次打开会被 Gatekeeper 拦下。二选一：
+> 1. **终端解锁（推荐）**：`xattr -cr /Applications/FanBox.app`，之后直接双击打开；
+> 2. **系统设置**：先在 Finder 双击一次 FanBox（会弹「无法验证开发者」），然后到 系统设置 → 隐私与安全性 → 安全性 区块，点 **「仍要打开 / Open Anyway」**。
+>
+> **macOS first launch**: the dmg is unsigned/notarization-pending, so Gatekeeper blocks the first open. Either:
+> 1. **Terminal (recommended)**: run `xattr -cr /Applications/FanBox.app`, then open normally;
+> 2. **System Settings**: double-click FanBox once in Finder (you'll see an "unverified developer" warning), then go to System Settings → Privacy & Security → click **"Open Anyway"**.
 >
 > 应用内置**更新提醒**：检测到 GitHub 上有新 Release 时，右下角会弹一条提示引导下载，不强更、可对单个版本「不再提醒」。  
 > Built-in **update notifications**: when a new release lands on GitHub, a capsule appears at the bottom right. Never forced; individual versions can be muted.
@@ -194,7 +199,18 @@ I don't own a Windows machine and can't reliably verify a Windows build or judge
 | daodao166888/fanbox-windows | [Releases](https://github.com/daodao166888/fanbox-windows/releases) |
 | cookiesheep/fanbox（v2.3.0 Windows） | [Release](https://github.com/cookiesheep/fanbox/releases/tag/v2.3.0-windows) |
 
-### 网页版（不打包，直接跑）/ Web (no packaging)
+### 网页版（从源码跑）/ Web (run from source)
+
+不需要打包成 App，clone 下来三步就能跑（要求 Node ≥ 18）：
+
+```bash
+git clone https://github.com/botio/fanbox.git
+cd fanbox
+npm install
+npm start                # = node server.js
+```
+
+然后浏览器打开 `http://localhost:4567` 即可。想让手机 / 局域网其他设备也能访问：
 
 ```bash
 FANBOX_LAN=1 node server.js     # 或在侧栏「网页版」卡点「局域网访问」，即时生效
