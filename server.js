@@ -2034,6 +2034,8 @@ async function agentProjects(force = false) {
   const map = new Map(); // cwd -> { lastActive, agents: Set }
   const add = (cwd, t, agent) => {
     if (!cwd || cwd === HOME) return; // 在家目录裸跑的会话不算「项目」
+    // 隐藏目录里的会话是工具自身在跑（pi 自更新、hermes 配置等），不是「项目」——点目录=工具空间惯例
+    if (cwd.startsWith(HOME + path.sep) && cwd.slice(HOME.length + 1).split(path.sep).some((s) => s.startsWith('.'))) return;
     const cur = map.get(cwd) || { lastActive: 0, agents: new Set() };
     cur.lastActive = Math.max(cur.lastActive, t);
     cur.agents.add(agent);
