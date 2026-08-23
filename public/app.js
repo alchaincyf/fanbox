@@ -5337,7 +5337,7 @@ const powerBar = {
   async init() {
     if (!window.fanboxPower) return; // 浏览器版 / 老 preload：整段不显示
     const st = await window.fanboxPower.state().catch(() => null);
-    if (!st || st.platform !== 'darwin') return; // 禁休眠靠 pmset，仅 macOS
+    if (!st || !['darwin', 'linux'].includes(st.platform)) return; // macOS 走 pmset；Linux 走 systemd-inhibit（ticket 07）；其余平台不显示
     this.st = st;
     $('#power-sec').classList.remove('hidden');
     $('#pw-lid').onclick = () => this.flip('lid');
@@ -5376,7 +5376,7 @@ const powerBar = {
     else now = '现在：没有终端会话 → 合盖照常休眠';
     return `<b>合盖继续干活</b>
       <p>翻箱盯着每个终端窗口的工作状态。开启后：只要检测到有 agent 正在干活，合上盖子 Mac 也不休眠，任务接着跑；所有终端都空闲约两分钟后，自动恢复正常休眠——不会让 Mac 一直不睡。</p>
-      <p class="tip-note">合盖跑任务持续耗电发热，建议接电源。首次开启需输一次管理员密码（装一条仅限电源设置的免密规则）。</p>
+      <p class="tip-note">合盖跑任务持续耗电发热，建议接电源。${st.platform === 'darwin' ? '首次开启需输一次管理员密码（装一条仅限电源设置的免密规则）。' : 'Linux 走 systemd-inhibit 用户层实现，零提权、无需密码。'}</p>
       <p class="tip-state">${escapeHtml(now)}</p>`;
   },
   tipWechat() {

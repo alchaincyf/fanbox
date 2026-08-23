@@ -196,7 +196,7 @@ Open `http://localhost:4567`. The full web version shares the desktop's UI and c
 - 全局同名搜索（macOS Spotlight 兜底）仅 macOS 可用，Linux 只搜已浏览的目录树。
 - 截图直通车 / 合盖防休眠为平台特有能力：Linux 截图走 inotify 常见截图目录，防休眠走 systemd-inhibit（GNOME 验证、KDE 冒烟）。
 - 内嵌终端 shell 依次取 `$SHELL` → `/bin/bash` → `/bin/sh`（macOS 默认 zsh 不变）。
-
+- 防休眠（合盖续跑）：Linux 走 `systemd-inhibit` 用户层零提权实现——进程持有 blocker，退出自动释放，无需 sudo；有盖设备挡合盖+挂起键，无盖小主机只挡 idle/自动挂起。侧栏「离开电脑」开关与 macOS 同款智能模式（agent 干活才生效）
 Desktop and web both run on mainstream glibc distros (Ubuntu/Debian/Arch smoke-tested). Linux notes: thumbnails need `ffmpeg` + `pdftoppm` (poppler-utils); global same-name search is macOS-only (Spotlight); screenshot express and lid-guard are platform-specific; the embedded terminal picks `$SHELL` → `/bin/bash` → `/bin/sh`.
 
 ### 开发模式 / Development

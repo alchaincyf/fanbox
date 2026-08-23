@@ -371,12 +371,35 @@ function sendPower() {
   if (win && !win.isDestroyed()) win.webContents.send('power:changed', powerPayload());
 }
 
-// 用 sudo -n（非交互）切换；sudoers 没装好就直接失败、绝不在后台弹密码
+// macOS：用 sudo -n（非交互）切换；sudoers 没装好就直接失败、绝不在后台弹密码
+// Linux：systemd-inhibit 用户层零提权（ticket 07）——进程活着 = 锁在，退出/被杀自动释放；
+// 有盖挡 handle-lid-switch + suspend-key，无盖小主机退化为只挡 idle/sleep
+let linuxInhibitChild = null;
 function trySetDisableSleep(on) {
-  if (process.platform !== 'darwin') return false;
-  // stdio 全静音：免密规则没装时 `sudo -n` 会往 stderr 喷「a password is required」，无害但会误导
-  try { require('child_process').execFileSync('/usr/bin/sudo', ['-n', 'pmset', '-a', 'disablesleep', on ? '1' : '0'], { stdio: 'ignore' }); return true; }
-  catch { return false; }
+  if (process.platform === 'darwin') {
+    // stdio 全静音：免密规则没装时 `sudo -n` 会往 stderr 喷「a password is required」，无害但会误导
+    try { require('child_process').execFileSync('/usr/bin/sudo', ['-n', 'pmset', '-a', 'disablesleep', on ? '1' : '0'], { stdio: 'ignore' }); return true; }
+    catch { return false; }
+  }
+  if (process.platform !== 'linux') return false;
+  const want = !!on;
+  if (want && linuxInhibitChild) return true;
+  if (!want) {
+    if (!linuxInhibitChild) return true; // 本来就没持有，视为已恢复
+    try { linuxInhibitChild.kill(); } catch { /* */ }
+    linuxInhibitChild = null;
+    return true;
+  }
+  try {
+    let hasLid = false;
+    try { hasLid = fs.readdirSync('/proc/acpi/button/lid').length > 0; } catch { /* 无盖设备 */ }
+    const what = hasLid ? 'handle-lid-switch:handle-suspend-key' : 'idle:sleep';
+    console.log('[lid] linux systemd-inhibit --what=' + what);
+    const child = require('child_process').spawn('systemd-inhibit', ['--what=' + what, '--mode=block', 'sleep', 'infinity'], { stdio: 'ignore' });
+    child.on('error', () => { if (linuxInhibitChild === child) linuxInhibitChild = null; }); // systemd-inhibit 缺失等
+    linuxInhibitChild = child;
+    return child.pid > 0;
+  } catch { linuxInhibitChild = null; return false; }
 }
 
 // 首次开启时弹一次系统管理员框，装仅限本用户、仅限 pmset disablesleep 0/1 的免密规则
@@ -408,7 +431,6 @@ function installSudoers() {
   });
 }
 
-// 确保 pmset 免密规则就位（探针：设 0 无害；不行就装一次规则）。两个开关共用。
 async function ensurePmsetRule() {
   if (process.platform !== 'darwin') return false;
   if (trySetDisableSleep(false)) return true; // 已有免密规则
@@ -418,7 +440,7 @@ async function ensurePmsetRule() {
 // 按「意图 × 触发条件」结算系统状态，幂等。终端起落、agent 忙闲轮询、微信连断、开关变化都调它。
 //  两条独立诉求 OR 起来：① 合盖继续干活（要有 agent 正在干活）② 微信遥控不断线（微信连着就保持唤醒，断开自动恢复）
 function refreshLidGuard() {
-  if (process.platform !== 'darwin') return;
+  if (process.platform !== 'darwin' && process.platform !== 'linux') return;
   const want = (lidIntent && terminals.size > 0 && termsBusyRecently()) || (wechatStayAwake && wechatConnected);
   if (want !== lidActive) {
     const ok = trySetDisableSleep(want);
@@ -435,7 +457,15 @@ function refreshLidGuard() {
 // 侧栏开关 / 菜单勾选共用的入口
 async function setLidIntent(on) {
   console.log('[lid] setLidIntent called, on =', on);
-  if (process.platform !== 'darwin') return { ok: false, error: 'macOS only' };
+  if (process.platform === 'linux') {
+    // 零提权：systemd-inhibit 用户层即可，无需管理员对话框 / sudoers 免密规则
+    lidIntent = !!on;
+    writeConfig({ lidStayAwake: !!on });
+    refreshLidGuard();
+    buildMenu();
+    return { ok: true, on: lidIntent };
+  }
+  if (process.platform !== 'darwin') return { ok: false, error: 'unsupported platform' };
   if (on) {
     const choice = dialog.showMessageBoxSync(win && !win.isDestroyed() ? win : undefined, {
       type: 'warning', buttons: [M('开启', 'Enable'), M('取消', 'Cancel')], defaultId: 0, cancelId: 1,
@@ -471,6 +501,7 @@ ipcMain.handle('power:setLid', async (e, { on } = {}) => {
 // 原生菜单——关键是 Edit role，终端里的 ⌘C/⌘V 才生效
 function buildMenu() {
   const isMac = process.platform === 'darwin';
+  const isLinux = process.platform === 'linux';
   const template = [
     ...(isMac ? [{ label: 'FanBox', submenu: [
       { role: 'about', label: M('关于 FanBox', 'About FanBox') },
@@ -492,8 +523,7 @@ function buildMenu() {
     { label: M('视图', 'View'), submenu: [
       { role: 'reload', label: M('重新加载', 'Reload') }, { role: 'toggleDevTools', label: M('开发者工具', 'Developer Tools') },
       { type: 'separator' }, { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' },
-      { type: 'separator' }, { role: 'togglefullscreen', label: M('全屏', 'Full Screen') },
-      ...(isMac ? [{ type: 'separator' }, {
+      ...((isMac || isLinux) ? [{ type: 'separator' }, {
         // 合盖继续干活：仅在检测到 agent 正在干活时真正生效（智能模式）；勾选状态反映用户意图
         label: lidActive ? M('合盖继续干活（生效中）', 'Keep working with lid closed (active)') : M('合盖继续干活', 'Keep working with lid closed'),
         type: 'checkbox', checked: lidIntent,
@@ -530,7 +560,7 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 // 退出兜底：无论怎么退（⌘Q、崩溃前的正常退出），都恢复系统休眠，绝不留禁休眠的烂摊子
-app.on('will-quit', () => { if (process.platform === 'darwin') trySetDisableSleep(false); });
+app.on('will-quit', () => { trySetDisableSleep(false); }); // macOS 恢复 pmset；Linux 杀 systemd-inhibit 持有进程
 
 // ---------- 终端 IPC（node-pty）----------
 ipcMain.handle('pty:spawn', (e, opts = {}) => core.spawn(opts));
