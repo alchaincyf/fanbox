@@ -99,29 +99,52 @@ function createCore(opts) {
   // ---------- 终端生命周期（node-pty）----------
   function spawn({ id, cwd, cols, rows, theme }) {
     if (!pty) return { ok: false, error: 'node-pty 未编译，跑：npm run rebuild' };
-    const shellPath = loginShell();
     const startCwd = cwd && fs.existsSync(cwd) ? cwd : os.homedir();
     // login shell（-l）：GUI 启动的进程只继承精简 PATH，不读 .zprofile/.zlogin，
     // 用户在那里配的 Homebrew/nvm/npm 全局路径（claude 等）就丢了 → 「普通终端能找到、fanbox 找不到」。
     // 走 login shell 把这些路径带进来。Windows 的 powershell 无此机制，保持空参数。
     const shellArgs = process.platform === 'win32' ? [] : ['-l'];
     // GUI 启动的 app 不继承 shell 的 locale，zsh 会把中文路径按字节转义成 \M-^@ 乱码 → 兜底 UTF-8
-    const env = {
-      ...process.env, TERM: 'xterm-256color', FANBOX: '1',
-      // 终端里的 agent 天生知道自己是几号窗口、控制接口在哪、门票是啥——skill 零配置（见 docs/12）
-      FANBOX_TERM_ID: id, FANBOX_CTL: `http://127.0.0.1:${PORT}/api/agent`, FANBOX_CTL_TOKEN: AGENT_TOKEN,
-    };
+    // env 淨化：posix_spawnp 对非字串值（undefined 等）会直接抛 posix_spawnp failed，
+    // GUI 启动或被注入过的环境可能出现脏值，这里只保留字串值。
+    const env = {};
+    for (const [k, v] of Object.entries(process.env)) { if (typeof v === 'string') env[k] = v; }
+    env.TERM = 'xterm-256color'; env.FANBOX = '1';
+    // 终端里的 agent 天生知道自己是几号窗口、控制接口在哪、门票是啥——skill 零配置（见 docs/12）
+    env.FANBOX_TERM_ID = id; env.FANBOX_CTL = `http://127.0.0.1:${PORT}/api/agent`; env.FANBOX_CTL_TOKEN = AGENT_TOKEN;
     if (!/UTF-8/i.test(env.LC_ALL || env.LC_CTYPE || env.LANG || '')) env.LANG = 'zh_CN.UTF-8';
+    // shell 候选逐一尝试：GUI 启动时 $SHELL 可能指向已被移除/损坏的 shell（posix_spawnp failed 的
+    // 最常见根因），loginShell() 给的路径必须验证存在且可执行，不行就依序兜底，绝不一击毙命。
+    const candidates = [];
+    const pushShell = (p) => {
+      try {
+        if (!p || candidates.includes(p)) return;
+        fs.accessSync(p, fs.constants.X_OK);
+        if (fs.statSync(p).isFile()) candidates.push(p);
+      } catch { /* 不存在或不可执行：跳过 */ }
+    };
+    pushShell(loginShell());
+    if (process.platform === 'darwin') { pushShell('/bin/zsh'); pushShell('/bin/bash'); }
+    else { pushShell('/bin/bash'); pushShell('/bin/zsh'); }
+    pushShell('/bin/sh');
+    if (!candidates.length) return { ok: false, error: '找不到可用的 shell（$SHELL 与 /bin/zsh、/bin/bash、/bin/sh 均不可执行）' };
     let p;
-    try {
-      p = pty.spawn(shellPath, shellArgs, {
-        name: 'xterm-256color',
-        cols: cols || 80,
-        rows: rows || 24,
-        cwd: startCwd,
-        env,
-      });
-    } catch (err) { return { ok: false, error: err.message }; }
+    let lastErr = '';
+    for (const shellPath of candidates) {
+      try {
+        p = pty.spawn(shellPath, shellArgs, {
+          name: 'xterm-256color',
+          cols: cols || 80,
+          rows: rows || 24,
+          cwd: startCwd,
+          env,
+        });
+        break;
+      } catch (err) {
+        lastErr = `${err.message}（shell: ${shellPath}）`;
+      }
+    }
+    if (!p) return { ok: false, error: lastErr || '终端启动失败：所有候选 shell 均无法 spawn' };
     terminals.set(id, p);
     hook(onSpawn, id); // 开关开着时，第一个终端起来即生效
     recStart(id, { cols, rows, cwd: startCwd, theme });
