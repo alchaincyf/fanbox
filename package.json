@@ -1,6 +1,6 @@
 {
   "name": "fanbox",
-  "version": "2.15.2",
+  "version": "2.15.3",
   "description": "FanBox — the cockpit for coding agents. Command Claude Code or Codex, watch every file and line they change, and take over anytime.",
   "author": {
     "name": "botio",

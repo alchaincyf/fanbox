@@ -9,6 +9,28 @@
 - 发版时把 `[Unreleased]` 改成版本号 + 日期，开新的空 `[Unreleased]`
 - GitHub Release 的发布说明直接复制对应版本的段落
 
+## [2.15.3] - 2026-08-26
+
+### Fixed
+- **終端聚焦時 ⌘K/Ctrl+K 全域搜尋失效**：按鍵被 xterm 吞掉送進 shell（^K 無聲刪字）。`attachCustomKeyEventHandler` 加 ⌘K 攔截 + `stopPropagation`（否則冒泡到 document 全域 handler 會把剛開的 cmdk 又關掉）
+- **/api/write 衝突保護可被繞過**：`expectedMtime` 傳非數字時 `Math.abs` 比較得 NaN，保護被靜默跳過直接覆蓋；現在非數字一律視為衝突
+- /api/list 目錄不存在回 404、無權限回 403，不再 500 吐原始 ENOENT
+- 預覽源埠被另一實例佔用時，EADDRINUSE 警告改為明確說明（後果 + 換端口指引）
+- EN 模式側欄「網頁版」區塊整組未翻譯：i18n 詞典補齊該區塊全部詞條與 title
+
+## [2.15.2] - 2026-08-23
+
+### Fixed
+- macOS 打包補 spawn-helper 執行位，修終端 posix_spawnp failed
+
+## [2.15.1] - 2026-08-23
+
+### Fixed
+- macOS dmg 加 ad-hoc 簽名鉤子——修未簽名 app 被 Gatekeeper 判「damaged and can't be opened」（Developer ID 升級前的過渡方案）；README 補首啟說明
+- 終端 spawn 加 shell 候選 fallback 與 env 淨化，修 Mac posix_spawnp failed
+- 桌面版 init 崩在 `webSec.init()` 造成 AGENT 項目與檔案區全空
+- 桌面版（Electron33/Node20 無 `node:sqlite`）Hermes 用量改走 Hermes venv python sqlite3 兜底
+
 ## [2.15.0] - 2026-08-22
 
 ### Added
