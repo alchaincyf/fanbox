@@ -3905,6 +3905,15 @@ const term = {
         term.adjustFont(sess, -1);
         return false;
       }
+      if (cmd && (e.key === 'k' || e.key === 'K')) {
+        // ⌘K 全域搜尋：終端持有焦點時也要能開，不把 ^K 送進 shell。
+        // stopPropagation 必須：事件若冒泡到 document 的全域切換 handler，會把剛開的 cmdk 又關掉
+        e.preventDefault();
+        e.stopPropagation();
+        const open = !$('#cmdk').classList.contains('hidden');
+        open ? cmdk.close() : cmdk.open();
+        return false;
+      }
       return true;
     });
 
