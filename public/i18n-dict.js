@@ -24,6 +24,18 @@ window.FANBOX_DICT = {
   '离开电脑': 'Away from Mac',
   '合盖继续干活': 'Keep working, lid closed',
   '微信遥控不断线': 'Stay awake for WeChat',
+  // 侧栏「网页版」状态区块（web-sec，动态渲染）
+  '网页版': 'Web',
+  '已连接': 'Connected',
+  '连接中…': 'Connecting…',
+  '局域网访问': 'LAN access',
+  '关闭局域网': 'Turn off LAN access',
+  '停用': 'Turn off',
+  '关闭': 'Close',
+  '与服务器的 WebSocket 连接状态': 'WebSocket connection status to the server',
+  '点击复制地址': 'Click to copy address',
+  '关闭后回到仅本机可访问（立即生效）': 'Turns back to local-only access (takes effect immediately)',
+  '开启后手机/平板经局域网访问本机 FanBox，立即生效。请只在受信任的网络（家庭 Wi-Fi / Tailscale）开启': 'Lets phones/tablets reach this FanBox over the LAN, effective immediately. Only enable on trusted networks (home Wi-Fi / Tailscale)',
   '翻箱盯着每个终端窗口的工作状态。开启后：只要检测到有 agent 正在干活，合上盖子 Mac 也不休眠，任务接着跑；所有终端都空闲约两分钟后，自动恢复正常休眠——不会让 Mac 一直不睡。': 'FanBox watches what each terminal is doing. When any agent is actively working, closing the lid won\'t sleep the Mac — the task keeps going. Once every terminal has been idle for ~2 minutes, normal sleep resumes automatically.',
   '合盖跑任务持续耗电发热，建议接电源。首次开启需输一次管理员密码（装一条仅限电源设置的免密规则）。': 'Running with the lid closed keeps drawing power and heat — stay plugged in. First time needs your admin password once (installs a power-only passwordless rule).',
   '开启后，手机微信连着 ClawBot 期间，合盖 / 息屏也不休眠——人在外面也能一直用微信遥控本机的 Claude Code / Codex；微信断开自动恢复正常休眠。': 'While WeChat stays connected to ClawBot, closing the lid / screen off won\'t sleep the Mac — you can keep remote-controlling Claude Code / Codex from your phone. Normal sleep resumes once WeChat disconnects.',
@@ -476,6 +488,8 @@ window.FANBOX_DICT = {
 };
 // 含插值的动态文案：正则 → 替换式（$1 等捕获组），EN 模式下逐条尝试
 window.FANBOX_DICT_RULES = [
+  // 通用 toast：已复制 <X>（web-sec 局域网地址等）
+  [/^已复制 (.+)$/, (m) => `Copied ${m[1]}`],
   // agent 启动按钮（动态生成的 title/toast）
   [/^启动 (.+)：空闲终端就地启动，正跑着任务则新开标签$/, (m) => `Launch ${m[1]}: starts in the idle terminal, or opens a new tab if one is busy`],
   [/^打开 (.+) 桌面应用（该产品无终端 CLI 形态）$/, (m) => `Open the ${m[1]} desktop app (no terminal CLI available)`],

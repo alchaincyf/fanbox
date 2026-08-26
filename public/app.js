@@ -126,7 +126,7 @@
       rows.push(`<div class="pw-row" title="与服务器的 WebSocket 连接状态"><span class="pw-dot${this.connected ? ' lit' : ''}"></span><span class="pw-label">${this.connected ? '已连接' : '连接中…'}</span></div>`);
       for (const a of st.addresses || []) rows.push(`<div class="pw-row" title="点击复制地址"><span class="pw-dot"></span><span class="pw-label web-addr" data-copy="${a}">${a}</span></div>`);
       if (st.lanMode) {
-        rows.push(`<div class="pw-row" title="关闭后回到仅本机可访问（立即生效）"><span class="pw-dot"></span><span class="pw-label">关闭局域网</span><button class="web-mini-btn" id="web-lan-off">关闭</button></div>`);
+        rows.push(`<div class="pw-row" title="关闭后回到仅本机可访问（立即生效）"><span class="pw-dot"></span><span class="pw-label">关闭局域网</span><button class="web-mini-btn" id="web-lan-off">停用</button></div>`);
       } else {
         rows.push(`<div class="pw-row" title="开启后手机/平板经局域网访问本机 FanBox，立即生效。请只在受信任的网络（家庭 Wi-Fi / Tailscale）开启"><span class="pw-dot"></span><span class="pw-label">局域网访问</span><label class="pw-switch" id="web-lan-sw"><i></i></label></div>`);
       }
