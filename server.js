@@ -412,9 +412,10 @@ async function writeTextFile(p, content, expectedMtime) {
   if (typeof content !== 'string') throw new Error('内容非法');
   // 并发覆盖保护：打开编辑后文件被外部（agent）改过或删除，拒绝盲覆盖
   if (expectedMtime) {
+    const expect = Number(expectedMtime); // 非数字一律视为冲突信号，不可静默绕过保护
     let cur = 0, missing = false;
     try { cur = (await fsp.stat(file)).mtimeMs; } catch { missing = true; }
-    if (missing || (cur && Math.abs(cur - expectedMtime) > 1)) {
+    if (missing || !Number.isFinite(expect) || (cur && Math.abs(cur - expect) > 1)) {
       const e = new Error(missing ? '文件已被外部删除' : '文件已被外部修改'); e.conflict = true; throw e;
     }
   }
@@ -2887,7 +2888,14 @@ const server = http.createServer(async (req, res) => {
       return sendJSON(res, 200, await cronAction(p.slice('/api/cron/'.length), await readBody(req)));
     }
     if (p === '/api/list') {
-      return sendJSON(res, 200, await listDir(qp.get('path') || HOME));
+      try {
+        return sendJSON(res, 200, await listDir(qp.get('path') || HOME));
+      } catch (err) {
+        // 目录不存在/无权限：语义上用 404/403，别把原始 ENOENT 当服务器错误
+        if (err && err.code === 'ENOENT') return sendJSON(res, 404, { error: '目录不存在' });
+        if (err && (err.code === 'EACCES' || err.code === 'EPERM')) return sendJSON(res, 403, { error: '没有权限' });
+        throw err;
+      }
     }
     if (p === '/api/read') {
       return sendJSON(res, 200, await readFile(qp.get('path')));
@@ -3255,7 +3263,15 @@ const previewServer = http.createServer(async (req, res) => {
     return serveRaw(req, res, raw);
   } catch (err) { res.writeHead(500); res.end(String((err && err.message) || err)); }
 });
-previewServer.on('error', (err) => { console.error('  ⚠️  预览服务器启动失败：', err.message); });
+previewServer.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    // 常见原因：另一个 FanBox 实例（预览源固定占 PORT+1）已在跑，不是本实例坏了
+    console.error(`  ⚠️  预览服务器启动失败：端口 ${PREVIEW_PORT} 已被占用（很可能是另一个 FanBox 实例的预览源）。`);
+    console.error('      主界面仍可用；HTML 即时预览会退化为下载/纯文本。换端口：FANBOX_PORT=<其他值> node server.js');
+  } else {
+    console.error('  ⚠️  预览服务器启动失败：', err.message);
+  }
+});
 previewServer.listen(PREVIEW_PORT, '127.0.0.1', () => { console.log(`  🖼  预览源（隔离）：http://localhost:${PREVIEW_PORT}`); });
 
 // ---------- 绑定地址管理：启动与设置页开关共用，支持运行时热换绑 ----------
