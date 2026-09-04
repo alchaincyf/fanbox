@@ -1109,6 +1109,34 @@ function bindSidebarResizer() {
     localStorage.setItem('fb_sidebar_w', state.sidebarW);
   });
 }
+// 悬浮：折叠态下鼠标停在左缘热区，延时浮出侧栏；离开侧栏延时收起；导航类点击立即收起，开关类不收起
+let peekOpenT, peekCloseT, peekClosedAt = 0;
+function closeSidebarPeek() {
+  clearTimeout(peekOpenT); clearTimeout(peekCloseT); peekCloseT = null; peekClosedAt = Date.now();
+  document.removeEventListener('mousemove', onPeekMove);
+  $('#app').classList.remove('sidebar-peek');
+}
+// 悬浮期间盯全局 mousemove 判断鼠标在不在侧栏里，而不是靠 #sidebar 的 mouseleave：
+// 侧栏是在鼠标静止时浮出来盖住指针的，浏览器不会补发 mouseenter，之后指针一步甩到主区就收不到 mouseleave，悬浮会卡住不收
+function onPeekMove(e) {
+  if ($('#sidebar').contains(e.target)) { clearTimeout(peekCloseT); peekCloseT = null; }
+  else if (!peekCloseT) peekCloseT = setTimeout(closeSidebarPeek, 300);
+}
+function bindSidebarPeek() {
+  const hot = $('#sidebar-hot'), sidebar = $('#sidebar'), app = $('#app');
+  if (!hot || !sidebar) return;
+  hot.addEventListener('mouseenter', () => {
+    // 收起瞬间指针若还停在左缘，侧栏消失后浏览器会补发一次 mouseenter 到热区，会把刚按 Esc / 刚点导航收掉的悬浮立刻再弹出来；刚收起的 200ms 内不理
+    if (Date.now() - peekClosedAt < 200) return;
+    peekOpenT = setTimeout(() => { app.classList.add('sidebar-peek'); document.addEventListener('mousemove', onPeekMove); }, 150);
+  });
+  hot.addEventListener('mouseleave', () => clearTimeout(peekOpenT));
+  // 导航类（切目录/收藏/agent 项目、搜索、Skills、定时任务）点击后立即收起；开关类（主题/合盖/用量等）留着
+  sidebar.addEventListener('click', (e) => {
+    if (!app.classList.contains('sidebar-peek')) return;
+    if (e.target.closest('#roots-list li, #favs-list li, #agent-projects-list li, #cmdk-trigger, #skills-entry, #cron-entry')) closeSidebarPeek();
+  });
+}
 // 预览尺寸随 dock 翻转：终端在右→预览在下方用高度，否则用宽度
 function applyPreviewSize() {
   const pv = $('#preview');
@@ -1171,6 +1199,7 @@ function setPreviewMax(on) {
 }
 function applyPreviewWidth() { applyPreviewSize(); } // 兼容旧调用名
 function toggleSidebar(force) {
+  closeSidebarPeek(); // ⌘B / 顶栏按钮触发的展开折叠，和悬浮态互斥，先收起悬浮再切
   // 关/开侧栏前记下终端占主区的比例（仅左右分栏时）：腾出/收回的宽度按比例分给「文件区+预览」和终端，
   // 而不是全甩给左侧文件区
   const panel = $('#terminal-panel');
@@ -3253,6 +3282,7 @@ function bindEvents() {
     const inInput = ['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName) || document.activeElement.isContentEditable || inTerm;
     // 输入框里按 Esc 先退出输入，别越级把预览关掉
     if (e.key === 'Escape' && inInput) { document.activeElement.blur(); return; }
+    if (e.key === 'Escape' && $('#app').classList.contains('sidebar-peek')) { e.preventDefault(); closeSidebarPeek(); return; }
     if (e.key === 'Escape' && !$('#preview').classList.contains('hidden')) { closePreview(); return; }
     if ((e.metaKey || e.ctrlKey) && e.key === '[') { e.preventDefault(); goBack(); return; }
     if ((e.metaKey || e.ctrlKey) && (e.key === 'b' || e.key === 'B') && !inInput) { e.preventDefault(); toggleSidebar(); return; }
@@ -6079,6 +6109,7 @@ async function init() {
   bindEvents();
   bindResizer();
   bindSidebarResizer();
+  bindSidebarPeek();
   bindSelectionToTerminal();
   enableTooltips();
   // md 里直接引用本地文件路径的图片，按页面 URL 解析必 404：加载失败时解析成绝对路径兜底显示。
