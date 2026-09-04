@@ -99,6 +99,20 @@ body {
 /* 折叠后顶栏贴到窗口左缘，给 macOS 红绿灯让位 */
 #app.sidebar-collapsed #topbar { padding-left: 80px; }
 
+/* ---------- 悬浮：折叠态下窗口左缘的热区 + 临时浮现的侧栏 ---------- */
+/* 热区：折叠且未悬浮时才存在，悬浮期间侧栏自己盖住这块地方，不需要热区再响应 */
+#sidebar-hot { position: fixed; top: 0; bottom: 0; left: 0; width: 6px; z-index: 44; display: none; -webkit-app-region: no-drag; }
+#app.sidebar-collapsed:not(.sidebar-peek) #sidebar-hot { display: block; }
+/* 预览全屏 / 图片编辑全屏时关掉热区：这两种全屏本就盖住整个窗口，悬浮弹出来也看不见，纯增加误触 */
+.preview-maxed #sidebar-hot, #app:has(.imgedit-tools) #sidebar-hot { display: none !important; }
+/* 悬浮：不占栅格列（fixed 脱离文档流），覆盖在主区之上；实色背景盖过 .desktop 半透明毛玻璃 */
+#app.sidebar-collapsed.sidebar-peek > #sidebar {
+  display: flex; position: fixed; top: 0; bottom: 0; left: 0; width: var(--sidebar-w, 248px);
+  z-index: 45; background: var(--panel); box-shadow: var(--shadow);
+  animation: sidebarPeekIn 0.18s ease;
+}
+@keyframes sidebarPeekIn { from { transform: translateX(-100%); } }
+
 /* ---------- 侧边栏 ---------- */
 #sidebar {
   background: var(--panel);
