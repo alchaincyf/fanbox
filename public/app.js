@@ -2969,6 +2969,17 @@ async function renderAgentButtons() {
   }
 }
 
+// 系统通知该不该发：桌面版问 main 的 macOS 闸门；网页版看浏览器授权 + 本机开关。{ on, pref: true|false|null }
+async function notifyState() {
+  if (typeof Notification === 'undefined') return { on: false, pref: false };
+  if (window.fanboxWin && window.fanboxWin.notifyState) {
+    const st = await window.fanboxWin.notifyState().catch(() => null);
+    return st && Notification.permission === 'granted' ? st : { on: false, pref: st ? st.pref : null };
+  }
+  let off = null; try { off = localStorage.getItem('fb_notify_off'); } catch { /* */ }
+  return { on: off !== '1' && Notification.permission === 'granted', pref: off === '1' ? false : (Notification.permission === 'default' ? null : true) };
+}
+
 // 设置面板：勾选即生效；未安装的显示「未装」，点它复制安装命令
 const agentsPop = {
   el: null, which: null,
@@ -2991,6 +3002,12 @@ const agentsPop = {
         <input type="checkbox" ${(() => { try { return localStorage.getItem('fanbox.noWebgl') === '1' ? '' : 'checked'; } catch { return 'checked'; } })()}>
         <span class="ap-name">WebGL 加速渲染</span>
       </label>
+      <div class="ap-head ap-sub">提醒</div>
+      <label class="ap-row" data-notify title="agent 收工或等你确认、而你没看着它时发系统通知。首次开启时系统可能问你是否允许——只会在你点这里时问，不会在后台突然弹">
+        <input type="checkbox" disabled>
+        <span class="ap-name">系统通知</span>
+        <span class="ap-flag" data-notify-flag></span>
+      </label>
       <div class="ap-head ap-sub">Agent 互控</div>
       <div class="ap-row" title="装进 ~/.claude/skills 后，翻箱终端里的 claude 就能指挥兄弟窗口：新开窗口 / 读输出 / 发指令 / 等结果">
         <span class="ap-name">fanbox-agent skill</span>
@@ -3007,6 +3024,7 @@ const agentsPop = {
     this.markSkill(pop);
     const wgCb = pop.querySelector('[data-webgl] input');
     if (wgCb) wgCb.onchange = () => { term.setWebgl(wgCb.checked); toast(wgCb.checked ? 'WebGL 渲染已开启' : '已切换兼容渲染（修中文乱码）'); };
+    this.markNotify(pop);
     pop.querySelectorAll('.ap-list .ap-row input').forEach((cb) => {
       cb.onchange = async () => {
         const ids = [...pop.querySelectorAll('.ap-list .ap-row input:checked')].map((x) => x.closest('.ap-row').dataset.id);
@@ -3017,6 +3035,26 @@ const agentsPop = {
     });
     this._out = (ev) => { if (!pop.contains(ev.target) && !$('#agent-config').contains(ev.target)) this.close(); };
     document.addEventListener('mousedown', this._out, true);
+  },
+  // 系统通知开关：只有在这里亲手打开时才可能触发系统 / 浏览器的授权询问，开了立刻发一条测试通知当面验证
+  async markNotify(pop) {
+    const cb = pop.querySelector('[data-notify] input'), flag = pop.querySelector('[data-notify-flag]');
+    if (!cb) return;
+    if (typeof Notification === 'undefined') { flag.textContent = '不可用'; return; }
+    const st = await notifyState();
+    cb.checked = st.on; cb.disabled = false;
+    flag.textContent = st.on ? '' : (st.pref === false ? '已关' : '未开');
+    cb.onchange = async () => {
+      const on = cb.checked;
+      if (window.fanboxWin && window.fanboxWin.notifySet) await window.fanboxWin.notifySet(on).catch(() => {});
+      else try { on ? localStorage.removeItem('fb_notify_off') : localStorage.setItem('fb_notify_off', '1'); } catch { /* */ }
+      flag.textContent = on ? '' : '已关';
+      if (!on) { toast('系统通知已关，提醒只留在应用内（提示音、红点、Dock 角标）'); return; }
+      if (Notification.permission === 'default') await Notification.requestPermission().catch(() => {}); // 你亲手点的，此刻问才合理
+      if (Notification.permission !== 'granted') { cb.checked = false; flag.textContent = '被拒'; toast('浏览器拒绝了通知权限，去站点设置里放行后再开', true); return; }
+      try { new Notification('FanBox 系统通知已开启', { body: 'agent 收工或等你确认、而你没看着时，会这样提醒你' }); } catch { /* */ }
+      toast('已发一条测试通知；没看到就去「系统设置 › 通知」里找 FanBox');
+    };
   },
   // 内置 skill 安装状态：未装 →「安装」可点；装过但内容旧 →「可更新」可点；最新 →「已装 ✓」
   async markSkill(pop) {
@@ -3982,7 +4020,8 @@ const term = {
       }
     } catch { /* 取不到就保持原标题 */ }
   },
-  async newTab(cwdOverride) {
+  // background：agent 遥控新开（见文末 onCreate）——不切走当前标签、不抢输入焦点，用户正在打字/语音输入的字不会落进新终端
+  async newTab(cwdOverride, { background = false } = {}) {
     const startDir = cwdOverride || state.cwd;
     const id = 't' + (++this.seq);
     const host = document.createElement('div');
@@ -4028,7 +4067,8 @@ const term = {
     if (fit) try { fit.fit(); } catch { /* */ }
     const sess = { id, xterm, fit, host, webgl: wg, dead: false, status: 'idle', unread: false, startDir, title: baseOf(startDir || '') || 'shell' };
     this.sessions.push(sess);
-    this.activate(id);
+    if (background && this.sessions.some((x) => x.id === this.active)) host.classList.remove('show'); // 已有前台标签：新标签留在后台
+    else this.activate(id, { focus: !background }); // 首个标签总得有人当前台，但后台开的不拿焦点
     updateWatches(); // 新终端的项目目录也纳入监听
     const r = await window.fanboxPty.spawn({ id, cwd: startDir, cols: xterm.cols, rows: xterm.rows, theme: state.theme });
     if (!r.ok) { sess.dead = true; xterm.write('\r\n  \x1b[31m终端启动失败：' + (r.error || '') + '\x1b[0m\r\n'); }
@@ -4040,8 +4080,24 @@ const term = {
     xterm.onResize(({ cols, rows }) => { sess.lastInput = Date.now(); window.fanboxPty.resize(id, cols, rows); }); // resize 引发的 TUI 重绘不算 agent 干活
     window.fanboxPty.resize(id, xterm.cols, xterm.rows); // spawn 等待期间 fit 过的 resize 事件无人监听会丢：补发一次对齐 PTY
 
+    // #66 豆包等输入法的中文标点不走组合（keyCode 不是 229）：xterm 在 keydown 就按键位发出英文 , . 并拦下默认行为，
+    // 输入法真正给出的「，。」随之被吞。标点键照 xterm 对 A-Z 的老办法放到 keypress 再发——它带的就是输入法给的字符；
+    // 多字符标点（……——）走 input 事件由下面接住；两样都没来（keyup 时还悬着）就按键位补发，保证不丢字
+    let punct = null;
+    host.addEventListener('input', (ev) => {
+      if (!punct || ev.inputType !== 'insertText' || !ev.data || ev.isComposing) return;
+      punct = null;
+      ev.stopPropagation(); // xterm 自己的 input 处理在 keydown 未抬起时本就不收，这里接手，免得两边都发
+      try { ev.target.value = ''; } catch { /* */ }
+      this.input(id, ev.data);
+    }, true);
     // 自定义键盘处理：⌘C 有选中文本则复制，否则发 SIGINT；⌘V 粘贴；⌘+/⌘-/⌘0 字体缩放
     xterm.attachCustomKeyEventHandler((e) => {
+      if (e.type === 'keydown') {
+        punct = null;
+        if (!e.metaKey && !e.ctrlKey && !e.altKey && !e.isComposing && e.keyCode !== 229 && e.key.length === 1 && /[^\p{L}\p{N}\s]/u.test(e.key)) { punct = e.key; return false; }
+      } else if (e.type === 'keypress') punct = null;
+      else if (e.type === 'keyup' && punct) { const k = punct; punct = null; this.input(id, k); }
       const cmd = e.metaKey || e.ctrlKey;
       if (cmd && (e.key === 'c' || e.key === 'C')) {
         if (xterm.hasSelection()) {
@@ -4243,7 +4299,7 @@ const term = {
     if (!r.ok) { sess.dead = true; sess.xterm.write('\x1b[31m重开失败：' + (r.error || '') + '\x1b[0m\r\n'); }
     else sess.cwd = r.cwd || sess.startDir;
   },
-  activate(id) {
+  activate(id, { focus = true } = {}) {
     this.active = id;
     this.sessions.forEach((s) => s.host.classList.toggle('show', s.id === id));
     const cur = this.sessions.find((x) => x.id === id);
@@ -4252,7 +4308,7 @@ const term = {
     const s = this.sessions.find((x) => x.id === id);
     if (s) {
       this.fitActive();
-      setTimeout(() => s.xterm.focus(), 0);
+      if (focus) setTimeout(() => s.xterm.focus(), 0);
       // 延迟刷新标题（避开双击窗口：双击的第二下若撞上 renderTabs 重建会丢 dblclick 事件）
       setTimeout(() => this.refreshCwd(s), 600);
     }
@@ -4485,20 +4541,23 @@ const term = {
     const text = lines.slice(-3).join(' ').replace(/\s+/g, ' ').trim();
     return text.length > maxLen ? text.slice(0, maxLen) + '…' : text;
   },
-  notify(s, title, body) {
+  // 授权框只该由你亲手点出来：后台事件里不 requestPermission，桌面版再过 main 的 macOS 闸门（notify:state）。
+  // 发不了也不丢：提示音、指挥台、Dock 角标、终端按钮红点照常在；没表过态的话本会话提一次去哪开
+  async notify(s, title, body) {
     try {
       if (typeof Notification === 'undefined') return;
-      const fire = () => {
-        const n = new Notification(title, { body });
-        // 点通知：app 拉回前台 + 切到对应终端标签——多项目并行时直达要操作的那个环境
-        n.onclick = () => {
-          try { if (window.fanboxWin) window.fanboxWin.focus(); else window.focus(); } catch { /* */ }
-          if (s && this.sessions.includes(s)) { this.open(); this.activate(s.id); }
-          try { n.close(); } catch { /* */ }
-        };
+      const st = await notifyState();
+      if (!st.on) {
+        if (st.pref === null && !this._notifyHinted && document.hasFocus()) { this._notifyHinted = true; toast('系统通知没开：提醒挂在「终端」红点和 Dock 角标上，可在 agent 按钮旁的滑杆设置里开启'); }
+        return;
+      }
+      const n = new Notification(title, { body });
+      // 点通知：app 拉回前台 + 切到对应终端标签——多项目并行时直达要操作的那个环境
+      n.onclick = () => {
+        try { if (window.fanboxWin) window.fanboxWin.focus(); else window.focus(); } catch { /* */ }
+        if (s && this.sessions.includes(s)) { this.open(); this.activate(s.id); }
+        try { n.close(); } catch { /* */ }
       };
-      if (Notification.permission === 'granted') fire();
-      else if (Notification.permission !== 'denied') Notification.requestPermission().then((p) => { if (p === 'granted') fire(); });
     } catch { /* 通知不可用就算了 */ }
   },
   renderTabs() {
@@ -4595,6 +4654,7 @@ const roster = {
     // Dock 角标：几个会话在等你。不看指挥台显不显示——一个会话在等你也该亮
     const need = list.filter((x) => this.tier(x.s, x.st)).length;
     if (need !== this._badge && window.fanboxWin && window.fanboxWin.setBadge) { this._badge = need; window.fanboxWin.setBadge(need ? String(need) : ''); }
+    $('#btn-terminal').classList.toggle('need', need > 0); // 面板收着时指挥台和呼吸边都看不见：红点挂在「终端」按钮上，点开即处理
     list.some((x) => x.st === 'working') ? this.startTick() : this.stopTick(); // 有人干活就每秒刷标签上的已跑时长
     const rows = list.filter((x) => this.tier(x.s, x.st));
     const show = list.length >= 2 && rows.length > 0;
@@ -6265,8 +6325,11 @@ window.fbWebgl = (on) => { term.setWebgl(!!on); console.log('[fanbox] WebGL ' + 
 if (window.fanboxAgentCtl) {
   window.fanboxAgentCtl.onCreate(async ({ reqId, cwd }) => {
     try {
-      if ($('#terminal-panel').classList.contains('hidden')) term.open();
-      const sess = await term.newTab(cwd || undefined);
+      // 后台开：不弹开收起的终端面板、不切标签、不抢焦点（可能正在别处打字或语音输入）。
+      // 面板收着时只留一句提示；它之后等你确认，终端按钮红点 + Dock 角标会喊你
+      const hidden = $('#terminal-panel').classList.contains('hidden');
+      const sess = await term.newTab(cwd || undefined, { background: true });
+      if (hidden && sess) toast(`agent 在后台新开了终端「${sess.title}」，点「终端」查看`);
       window.fanboxAgentCtl.created({ reqId, ok: !!(sess && sess.id), id: sess && sess.id });
     } catch (e) { window.fanboxAgentCtl.created({ reqId, ok: false, error: String(e && e.message || e) }); }
   });

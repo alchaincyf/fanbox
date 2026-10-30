@@ -225,8 +225,8 @@ app.whenReady().then(() => {
     console.log('[lid] 视图 子菜单 =', view ? JSON.stringify(view.submenu.items.map((x) => x.label || `<${x.type}>`)) : '没找到视图菜单');
   } catch (e) { console.log('[lid] dump menu 出错:', e.message); }
   createWindow();
-  // 临时调试：dev 实例强制抢到最前，避免和正式版搞混
-  setTimeout(() => { try { app.focus({ steal: true }); if (win && !win.isDestroyed()) { win.show(); win.focus(); win.setAlwaysOnTop(true); setTimeout(() => win.setAlwaysOnTop(false), 1500); } } catch { /* */ } }, 1200);
+  // 临时调试：dev 实例强制抢到最前，避免和正式版搞混。只限开发实例——正式版若跟着抢，开机自启 / 更新后重启时会把你正在打字的窗口夺走
+  if (!app.isPackaged) setTimeout(() => { try { app.focus({ steal: true }); if (win && !win.isDestroyed()) { win.show(); win.focus(); win.setAlwaysOnTop(true); setTimeout(() => win.setAlwaysOnTop(false), 1500); } } catch { /* */ } }, 1200);
   startShotWatch();
   // 启动 6 秒后查一次新版本（不挡启动）；长开会话每 2 小时再查；
   // 窗口重新聚焦也顺手查（30 分钟节流）——否则发版当天老 app 要等满周期才知道有新版
@@ -464,6 +464,27 @@ ipcMain.handle('win:badge', (e, { text }) => {
   if (process.platform !== 'darwin' || !app.dock) return;
   try { app.dock.setBadge(String(text || '')); } catch { /* */ }
 });
+
+// 系统通知闸门：macOS 上 FanBox 第一次发通知时，要不要问「允许通知」由系统决定——agent 收工 / 等确认多半发生在你没看着的时候，
+// 不能让授权框在后台突然冒出来。只有系统里已登记过 FanBox 的通知设置（允许、拒绝都算，之后不会再问），
+// 或你在设置面板亲手开过，才发系统通知；否则提醒只留在应用内（提示音、指挥台、Dock 角标、终端按钮红点）。只读登记，不碰系统设置
+let ncCache = { t: 0, v: false };
+function notifyRegistered() {
+  if (process.platform !== 'darwin') return Promise.resolve(true);
+  if (Date.now() - ncCache.t < 60000) return Promise.resolve(ncCache.v);
+  let id = '';
+  try { id = (fs.readFileSync(path.join(path.dirname(process.execPath), '..', 'Info.plist'), 'utf8').match(/<key>CFBundleIdentifier<\/key>\s*<string>([^<]+)<\/string>/) || [])[1] || ''; } catch { /* */ }
+  return new Promise((resolve) => require('child_process').execFile('/usr/bin/defaults', ['export', 'com.apple.ncprefs', '-'], { timeout: 3000, maxBuffer: 16 << 20 }, (err, out) => {
+    const v = !err && !!id && new RegExp(`<key>bundle-id</key>\\s*<string>${id.replace(/\./g, '\\.')}</string>`).test(String(out));
+    ncCache = { t: Date.now(), v }; resolve(v);
+  }));
+}
+ipcMain.handle('notify:state', async () => {
+  const pref = readConfig().systemNotify; // true = 亲手开过，false = 亲手关了，undefined = 没表过态
+  const registered = await notifyRegistered();
+  return { on: pref === false ? false : (pref === true || registered), pref: typeof pref === 'boolean' ? pref : null, registered };
+});
+ipcMain.handle('notify:set', (e, { on } = {}) => { writeConfig({ systemNotify: !!on }); return { ok: true }; });
 
 // 预览全屏时藏掉左上角红黄绿系统按钮——它和右侧自家关闭图标太像，容易让人误点
 ipcMain.handle('win:traffic', (e, { show }) => {

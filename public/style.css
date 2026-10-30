@@ -281,6 +281,12 @@ kbd {
   border-color: color-mix(in srgb, var(--accent) 40%, transparent);
 }
 #btn-terminal:hover, #btn-terminal.active { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+/* 面板收着、有终端在等你：按钮右上角红点（展开时指挥台和标签已经在喊，不重复） */
+#btn-terminal { position: relative; }
+#btn-terminal.need:not(.active)::after {
+  content: ''; position: absolute; top: -3px; right: -3px; width: 8px; height: 8px; border-radius: 50%;
+  background: #d9534f; box-shadow: 0 0 0 2px var(--bg-2, var(--bg));
+}
 
 #content { flex: 1; overflow-y: auto; display: flex; flex-direction: column; }
 #file-area { padding: 12px 16px 40px; flex: 1; } /* 撑满 #content 高度：文件下方空白也算文件夹内，拖拽存盘不再"下半截无效" */

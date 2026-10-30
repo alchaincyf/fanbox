@@ -92,6 +92,8 @@ contextBridge.exposeInMainWorld('fanboxWin', {
   focus: () => ipcRenderer.invoke('win:focus'), // 点通知拉回前台
   trafficLights: (show) => ipcRenderer.invoke('win:traffic', { show }), // 全屏预览时藏/显左上角系统按钮
   setBadge: (text) => ipcRenderer.invoke('win:badge', { text }), // Dock 角标：几个会话在等你（空串清掉）
+  notifyState: () => ipcRenderer.invoke('notify:state'), // 系统通知闸门：{ on, pref, registered }，见 main
+  notifySet: (on) => ipcRenderer.invoke('notify:set', { on }),
 });
 
 // Agent 控制接口（/api/agent/*）的渲染侧配合：main 请求开新终端 tab + 被控 tab 闪标记
