@@ -1909,20 +1909,60 @@ let tokenWorker = null;
 let tokenInFlight = null;
 let tokenResult = null;
 let tokenResultAt = 0;
+let tokenReqSeq = 0;
 function localTokenUsage() {
   if (tokenResult && Date.now() - tokenResultAt < 30000) return Promise.resolve(tokenResult);
   if (tokenInFlight) return tokenInFlight;
   tokenInFlight = new Promise((resolve, reject) => {
     const { Worker } = require('worker_threads');
     const worker = tokenWorker || (tokenWorker = new Worker(path.join(__dirname, 'lib', 'agent-tokens.js')));
+    const seq = ++tokenReqSeq; // 用量与实时速率共用 worker，按 seq 认领回包，防串包
     const clean = () => { worker.removeListener('message', done); worker.removeListener('error', fail); worker.removeListener('exit', exited); worker.unref(); };
-    const done = (data) => { clean(); if (data.error) return reject(new Error('统计失败')); tokenResult = data; tokenResultAt = Date.now(); usageResultCache.at = 0; resolve(data); };
+    const done = (data) => { if (data.seq !== seq) return; clean(); if (data.error) return reject(new Error('统计失败')); tokenResult = data; tokenResultAt = Date.now(); usageResultCache.at = 0; resolve(data); };
     const fail = () => { clean(); tokenWorker = null; reject(new Error('统计失败')); };
     const exited = () => { tokenWorker = null; fail(); };
     worker.ref(); worker.once('message', done); worker.once('error', fail); worker.once('exit', exited);
-    worker.postMessage({ claudeRoot: CLAUDE_PROJ, codexRoot: CODEX_SESS });
+    worker.postMessage({ claudeRoot: CLAUDE_PROJ, codexRoot: CODEX_SESS, seq });
   }).finally(() => { tokenInFlight = null; });
   return tokenInFlight;
+}
+
+// ---------- 实时速率：滑动窗口（近 1 分钟 + 近 10 分钟每分钟柱状）。
+// 数据源同本地 token 统计（会话日志的增量尾读），但新鲜度要求不同：汇总 30s 缓存，速率 1s。
+// 输出(output)与上下文重发(input+cache)分桶——agent 场景下上下文占 95%+，混在一起当「速率」会虚高一个数量级。
+let rateReqSeq = 0, rateResult = null, rateResultAt = 0, rateInFlight = null;
+function agentRate() {
+  if (rateResult && Date.now() - rateResultAt < 1000) return Promise.resolve(rateResult);
+  if (rateInFlight) return rateInFlight;
+  rateInFlight = new Promise((resolve, reject) => {
+    const { Worker } = require('worker_threads');
+    const worker = tokenWorker || (tokenWorker = new Worker(path.join(__dirname, 'lib', 'agent-tokens.js')));
+    const seq = ++rateReqSeq;
+    const clean = () => { worker.removeListener('message', done); worker.removeListener('error', fail); worker.removeListener('exit', exited); worker.unref(); };
+    const done = (data) => { if (data.seq !== seq || data.mode !== 'rate') return; clean(); if (data.error) return reject(new Error('统计失败')); rateResult = data; rateResultAt = Date.now(); resolve(data); };
+    const fail = () => { clean(); tokenWorker = null; reject(new Error('统计失败')); };
+    const exited = () => { tokenWorker = null; fail(); };
+    worker.ref(); worker.once('message', done); worker.once('error', fail); worker.once('exit', exited);
+    worker.postMessage({ claudeRoot: CLAUDE_PROJ, codexRoot: CODEX_SESS, mode: 'rate', seq });
+  }).finally(() => { rateInFlight = null; });
+  return rateInFlight;
+}
+
+function mergeRate(d) {
+  const total = (a, b) => a + (b || 0);
+  const win60 = { total: 0, output: 0, input: 0, cacheRead: 0, cacheCreate: 0, msgs: 0 };
+  for (const k of ['claude', 'codex']) {
+    const w = d[k] && d[k].rate && d[k].rate.win60;
+    if (!w) continue;
+    for (const f of Object.keys(win60)) win60[f] = total(win60[f], w[f]);
+  }
+  const buckets = Array.from({ length: 10 }, (_, i) => ({
+    total: total(d.claude.rate?.buckets[i]?.total, d.codex.rate?.buckets[i]?.total),
+    output: total(d.claude.rate?.buckets[i]?.output, d.codex.rate?.buckets[i]?.output),
+  }));
+  const pretty = (dir) => { const seg = String(dir || '').split('-').filter(Boolean); return seg.length > 1 && seg[0].length <= 2 ? seg.slice(1).join('-') : seg.join('-'); };
+  const active = (d.claude.active || []).map((a) => ({ name: pretty(a.dir) || a.dir, t: a.t }));
+  return { win60, buckets, active };
 }
 
 // 从最近改动的 rollout 文件尾部抓最后一条带 rate_limits 的 token_count（官方配额快照）
@@ -3011,6 +3051,9 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === '/api/agent-usage') {
       return sendJSON(res, 200, await agentUsage());
+    }
+    if (p === '/api/agent-rate') {
+      return sendJSON(res, 200, { ok: true, at: Date.now(), ...mergeRate(await agentRate()) });
     }
     if (p === '/api/favorites') {
       if (req.method === 'POST') {
