@@ -1486,6 +1486,7 @@ body { transition: background-color 0.28s ease, color 0.28s ease; }
 .tr-agent svg, .tr-agent img { width: 12px; height: 12px; }
 .tr-name { flex: none; max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
 .tr-st { flex: none; }
+.tr-wait { flex: none; color: var(--text-faint); font-variant-numeric: tabular-nums; }
 .tr-tag { flex: none; padding: 0 5px; border-radius: 99px; font-size: 10px; line-height: 15px; color: var(--accent-ink); background: var(--accent); }
 .tr-say { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--text-faint); }
 .tr-files { flex: none; color: var(--text-dim); }

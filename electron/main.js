@@ -41,6 +41,13 @@ const termFacts = new Map();
 const agentState = require('../lib/agent-state');
 const autoResume = require('../lib/auto-resume');
 const resumeFacts = new Map(); // id -> 这个终端当前这次故障的续跑记录（见 autoResumeTick）
+const relay = require('../lib/relay');
+const relayLog = relay.createLog(); // 窗口互通的内存日志：各窗口里你的原话、agent 改的文件（见 agentRelay）。不落盘
+const relaySeqs = new Map(); // id -> 这个窗口收到第几条了。跟窗口走不跟会话走：同一个窗口里重开 claude，接着上次的收
+const agentSentAt = new Map(); // id -> [{ text, at }]：别的 agent 经 /send 发进这个窗口的话（留最近 10 条、10 分钟）。那不是你说的，不当成你的话转告
+const sentByAgent = (id, text, now) => (agentSentAt.get(id) || []).some((x) => now - x.at < 600000 && x.text === String(text || '').trim());
+let relayOnCache = null;
+const relayOn = () => (relayOnCache === null ? (relayOnCache = readConfig().relay !== false) : relayOnCache);
 
 // ---------- Agent 官方 hooks：让 claude/codex 自己汇报「在干活 / 等确认 / 干完了」，取代刮终端文本 ----------
 // 启动时把两份静态文件写到 ~/.fanbox/hooks/：claude 走 `--settings 文件` 叠加（不动用户自己的
@@ -57,6 +64,12 @@ function writeHookFiles() {
     const hooks = {};
     for (const ev of ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'Notification', 'Stop', 'SubagentStop', 'SessionEnd']) hooks[ev] = on('*');
     hooks.PostToolUse = on('Edit|Write|MultiEdit|NotebookEdit|Bash');
+    // 窗口互通：这一条是同步的（要把返回的内容送进 agent 的上下文），只挂在你发话和工具跑完两处；
+    // 没有要送的就返回空、agent 无感；2 秒超时，FanBox 没开着也只是空转一下。-f：这份钩子文件是各版本共用的，
+    // 旧版 FanBox 没有这个接口会回一段报错 JSON，不能让它进 agent 的上下文
+    const relayHook = { type: 'command', command: `${HOOK_CURL.replace('/event"', '/relay"').replace('-m 3', '-f -m 2')} @- 2>/dev/null || true`, timeout: 4 };
+    hooks.UserPromptSubmit[0].hooks.push(relayHook);
+    hooks.PostToolUse[0].hooks.push(relayHook);
     fs.copyFileSync(path.join(__dirname, '..', 'lib', 'claude-statusline.cjs'), path.join(dir, 'claude-statusline.cjs'));
     const quote = (s) => "'" + s.replace(/'/g, "'\\''") + "'";
     const command = process.platform === 'win32'
@@ -492,6 +505,9 @@ ipcMain.handle('notify:state', async () => {
 ipcMain.handle('notify:set', (e, { on } = {}) => { writeConfig({ systemNotify: !!on }); return { ok: true }; });
 // 断线自动续跑：默认开，设置里可关（~/.fanbox/config.json 的 autoResume）
 ipcMain.handle('resume:state', () => ({ on: readConfig().autoResume !== false }));
+// 窗口互通：默认开，设置里可关（~/.fanbox/config.json 的 relay）。关掉时连已经记下的话一起清掉
+ipcMain.handle('relay:state', () => ({ on: relayOn() }));
+ipcMain.handle('relay:set', (e, { on } = {}) => { writeConfig({ relay: !!on }); relayOnCache = !!on; if (!on) relayLog.items.length = 0; return { ok: true }; });
 ipcMain.handle('resume:set', (e, { on } = {}) => { writeConfig({ autoResume: !!on }); if (!on) resumeFacts.clear(); return { ok: true }; });
 
 // 预览全屏时藏掉左上角红黄绿系统按钮——它和右侧自家关闭图标太像，容易让人误点
@@ -1067,12 +1083,16 @@ function agentEvent(termId, body) {
   const now = Date.now();
   let f = termFacts.get(id);
   if (!f) termFacts.set(id, f = { agent: kind, sessionId: '', state: 'working', since: now, lastEventAt: now, hooked: true, changed: new Map() });
+  if (!relaySeqs.has(id)) relaySeqs.set(id, relayLog.seq); // 这个窗口第一次有会话：从当下算起，不翻旧账
   let event, state = f.state, file = '';
   if (kind === 'claude') {
     f.agent = 'claude'; event = b.hook_event_name;
     if (b.session_id) f.sessionId = String(b.session_id);
     if (typeof b.transcript_path === 'string' && !b.agent_id) f.transcript = b.transcript_path; // 对账用，见 settleAgentStates
     ({ state, event } = agentState.claudeNext(f, b, now));
+    if (typeof b.cwd === 'string' && !b.agent_id && !f.cwd) f.cwd = b.cwd; // 只记会话起点的目录：agent 中途 cd 到子目录，还是同一个项目
+    const byAgent = sentByAgent(id, b.prompt, now);
+    if (b.hook_event_name === 'UserPromptSubmit' && !byAgent && relayOn() && relay.worthSaying(b.prompt)) relay.record(relayLog, 'said', id, { cwd: f.cwd, text: String(b.prompt) }, now);
     if (b.hook_event_name === 'PostToolUse') {
       const tool = String(b.tool_name || '');
       const p = b.tool_input && (b.tool_input.file_path || b.tool_input.notebook_path);
@@ -1082,12 +1102,17 @@ function agentEvent(termId, body) {
         c.n++; c.lastAt = now; c.tool = tool;
         if (!f.changed.has(p) && f.changed.size >= 500) f.changed.delete(f.changed.keys().next().value);
         f.changed.set(p, c);
+        if (relayOn()) relay.record(relayLog, 'edit', id, { cwd: f.cwd, file: p }, now);
       }
     }
   } else {
     f.agent = 'codex'; event = b.type;
     if (b['thread-id']) f.sessionId = String(b['thread-id']);
     state = /turn-(complete|ended)/.test(event) ? 'done' : 'working';
+    // codex 没有能往上下文里送东西的钩子，只能当「说话的一方」：回合结束时把你这回合说的话记下，送给别的窗口
+    if (typeof b.cwd === 'string' && !f.cwd) f.cwd = b.cwd;
+    const said = Array.isArray(b['input-messages']) ? b['input-messages'][b['input-messages'].length - 1] : '';
+    if (state === 'done' && relayOn() && !sentByAgent(id, said, now) && relay.worthSaying(said)) relay.record(relayLog, 'said', id, { cwd: f.cwd, text: String(said) }, now);
   }
   const changed = state !== f.state;
   if (changed) f.since = now;
@@ -1097,6 +1122,20 @@ function agentEvent(termId, body) {
   if (state === 'ended') termFacts.delete(id);
   if (changed) refreshLidGuard(); // 收工/开工立刻结算电源守卫，不等 30s 轮询
   return { ok: true, id, state };
+}
+// 窗口互通（/api/agent/relay，claude 的同步钩子调这里）：把别的窗口里跟这个窗口有关的新情况交给它。
+// 有关 = 同一个目录（家目录除外）的窗口里你说的话、别的窗口改了这个窗口也改过的文件。
+// 每个窗口各记一个读到哪了的序号，送过的不再送；子代理不送；窗口第一次有会话时从当下算起，不翻旧账
+function agentRelay(termId, body) {
+  const id = String(termId || ''), b = body && typeof body === 'object' ? body : {};
+  const f = termFacts.get(id);
+  if (!f || !relayOn() || b.agent_id || typeof b.hook_event_name !== 'string') return { ok: true, out: '' };
+  const now = Date.now();
+  const got = relay.collect(relayLog, id, { cwd: f.cwd || '', files: new Set(f.changed.keys()), home: os.homedir() }, relaySeqs.get(id) || 0, now);
+  relaySeqs.set(id, got.seq);
+  const text = relay.format(got, (t) => { const o = termFacts.get(t); return ((o && o.cwd && path.basename(o.cwd)) || '终端') + ' ' + t; }, now);
+  if (text && win && !win.isDestroyed()) win.webContents.send('agent:relay', { id, said: got.said.length, edits: got.edits.length, from: [...new Set([...got.said, ...got.edits].map((x) => x.term))] });
+  return { ok: true, out: relay.hookOutput(b.hook_event_name, text) };
 }
 // 对账：状态停在 working、90 秒没有任何事件、会话日志却说回合早就结束了——把它改回 done。
 // 钩子事件会丢、会乱序、以后还可能多出新的事件种类；只靠事件，错一次就一直错到用户下次发话
@@ -1145,7 +1184,7 @@ function agentSend(id, text, opts = {}) {
   if (opts.paste) t = '\x1b[200~' + t + '\x1b[201~'; // bracketed paste：多行文本整块进 TUI，不被逐行提交
   else t = t.replace(/\r\n|\n/g, '\r'); // 换行 → 回车才会真正提交
   if (opts.submit !== false && !/\r$/.test(t)) t += '\r';
-  try { p.write(t); recEvent(id, 'i', t); agentTouch(id, 'send'); return { ok: true }; }
+  try { p.write(t); recEvent(id, 'i', t); agentTouch(id, 'send'); agentSentAt.set(id, [...(agentSentAt.get(id) || []).slice(-9), { text: String(text == null ? '' : text).trim(), at: Date.now() }]); return { ok: true }; }
   catch (e) { return { ok: false, error: String(e && e.message || e) }; }
 }
 function agentCreate(opts = {}) {
@@ -1216,7 +1255,7 @@ function agentKill(id) {
   catch (e) { return { ok: false, error: String(e && e.message || e) }; }
 }
 // server.js 在子进程里经 RPC 桥调这组能力（见 startBackendServer）；token 走 fork env
-const agentImpl = { list: agentList, read: agentRead, send: agentSend, create: agentCreate, wait: agentWait, kill: agentKill, event: agentEvent };
+const agentImpl = { list: agentList, read: agentRead, send: agentSend, create: agentCreate, wait: agentWait, kill: agentKill, event: agentEvent, relay: agentRelay };
 
 // ---------- 录制文件管理 IPC ----------
 // 列表：读每个 .cast 的头行拿元信息 + 文件大小/时长（末事件时间），按新→旧。失败的文件跳过不报错。

@@ -3013,6 +3013,11 @@ const agentsPop = {
         <span class="ap-name">断线自动续跑</span>
         <span class="ap-flag" data-resume-flag></span>
       </label>
+      <label class="ap-row" data-relay style="display:none" title="你在一个窗口里对 agent 说的话，会转给同一个项目目录下的其他 Claude Code 窗口（家目录下开的窗口之间不转）；一个窗口改了另一个窗口也改过的文件，也会告诉后者。FanBox 自己不存盘、不上传；转过去的话会进入收到它的那个会话。Codex 窗口里说的话能转出去，但它自己收不到">
+        <input type="checkbox">
+        <span class="ap-name">窗口互通</span>
+        <span class="ap-flag" data-relay-flag></span>
+      </label>
       <div class="ap-head ap-sub">Agent 互控</div>
       <div class="ap-row" title="装进 ~/.claude/skills 后，翻箱终端里的 claude 就能指挥兄弟窗口：新开窗口 / 读输出 / 发指令 / 等结果">
         <span class="ap-name">fanbox-agent skill</span>
@@ -3031,6 +3036,7 @@ const agentsPop = {
     if (wgCb) wgCb.onchange = () => { term.setWebgl(wgCb.checked); toast(wgCb.checked ? 'WebGL 渲染已开启' : '已切换兼容渲染（修中文乱码）'); };
     this.markNotify(pop);
     this.markResume(pop);
+    this.markRelay(pop);
     pop.querySelectorAll('.ap-list .ap-row input').forEach((cb) => {
       cb.onchange = async () => {
         const ids = [...pop.querySelectorAll('.ap-list .ap-row input:checked')].map((x) => x.closest('.ap-row').dataset.id);
@@ -3041,6 +3047,19 @@ const agentsPop = {
     });
     this._out = (ev) => { if (!pop.contains(ev.target) && !$('#agent-config').contains(ev.target)) this.close(); };
     document.addEventListener('mousedown', this._out, true);
+  },
+  // 窗口互通开关（只有桌面版有：各窗口的事件都汇在主进程）
+  async markRelay(pop) {
+    const row = pop.querySelector('[data-relay]');
+    if (!row || !window.fanboxWin || !window.fanboxWin.relayState) return;
+    const cb = row.querySelector('input'), flag = row.querySelector('[data-relay-flag]');
+    const st = await window.fanboxWin.relayState().catch(() => ({ on: true }));
+    row.style.display = ''; cb.checked = st.on; flag.textContent = st.on ? '' : '已关';
+    cb.onchange = async () => {
+      await window.fanboxWin.relaySet(cb.checked).catch(() => {});
+      flag.textContent = cb.checked ? '' : '已关';
+      toast(cb.checked ? '窗口互通已开' : '窗口互通已关，各窗口不再互相转告');
+    };
   },
   // 断线自动续跑开关（只有桌面版有：续跑由主进程盯终端输出来做）
   async markResume(pop) {
@@ -4511,6 +4530,14 @@ const term = {
       if (!document.hasFocus() || s.id !== this.active) this.notify(s, 'agent 任务完成 · ' + (s.title || 'shell'), this.lastReplyExcerpt(s) || (s.title || 'shell') + ' 已空闲');
     }
   },
+  // 主进程把别的窗口的新情况转给了这个窗口：说一声，让人知道 agent 的上下文里多了什么
+  onAgentRelay({ id, said, edits, from }) {
+    const s = this.sessions.find((x) => x.id === id);
+    if (!s) return;
+    const names = (from || []).map((t) => { const o = this.sessions.find((x) => x.id === t); return o ? (o.title || 'shell') : t; }).join('、');
+    const what = [said ? `你说的 ${said} 句话` : '', edits ? `agent 的 ${edits} 处文件改动` : ''].filter(Boolean).join('、');
+    toast(`已把「${names}」里${what}转告给「${s.title || 'shell'}」`);
+  },
   // 主进程替你敲了「继续」，或者碰上它不代办的故障：说一声，不在场也留一条系统通知
   onAgentResume({ id, action, attempt, evidence }) {
     const s = this.sessions.find((x) => x.id === id);
@@ -4654,6 +4681,8 @@ const roster = {
     if (st === 'idle' && s._rState === 'working' && !seen && (s.hooked || Date.now() - (s.busyStart || 0) > 4000)) s._fresh = true;
     if (st !== 'idle' || seen) s._fresh = false;
     s._rState = st;
+    // 从什么时候开始等你的：排队和「等了多久」都看它
+    if (!this.tier(s, st)) s._needSince = 0; else if (!s._needSince) s._needSince = Date.now();
   },
   // 需要你的优先级：等你确认 > 等你输入 > 刚完成未看；0 = 不需要
   tier(s, st) { return st === 'ask' ? 1 : st === 'input' ? 2 : (st === 'idle' && s._fresh) ? 3 : 0; },
@@ -4685,9 +4714,11 @@ const roster = {
     const icon = s.agent ? this.agentIcon(s.agent) : ic('term', `hsl(${hue} 62% 48%)`, 12);
     const fresh = st === 'idle' && s._fresh ? '<span class="tr-tag">刚完成</span>' : '';
     const n = this.changed(s);
+    const mins = Math.floor((Date.now() - (s._needSince || Date.now())) / 60000);
+    const wait = mins >= 1 ? `<span class="tr-wait" title="从它停下来等你算起">等了 ${mins >= 60 ? Math.floor(mins / 60) + ' 小时' + (mins % 60 ? ' ' + mins % 60 + ' 分' : '') : mins + ' 分钟'}</span>` : '';
     return `<div class="tr-row st-${st}${s.id === term.active ? ' active' : ''}" data-id="${s.id}" title="点击切到该标签">
       <span class="tr-shape" title="${this.LABEL[st]}">${this.SHAPE[st]}</span><span class="tr-agent">${icon}</span><span class="tr-name">${escapeHtml(s.title || 'shell')}</span>
-      <span class="tr-st">${this.LABEL[st]}</span>${fresh}<span class="tr-say" title="${st === 'dead' ? '' : escapeHtml(term.lastReplyExcerpt(s, 600))}">${this.say(s, st)}</span>${this.canReply(s, st) ? `<input class="tr-reply" placeholder="回一句，回车发送" spellcheck="false" value="${escapeHtml(s._reply || '')}">` : ''}<span class="tr-files"${n ? ` title="本回合改动 ${n} 个文件"` : ''}>${n ? n + ' 文件' : ''}</span></div>`;
+      <span class="tr-st">${this.LABEL[st]}</span>${fresh}${wait}<span class="tr-say" title="${st === 'dead' ? '' : escapeHtml(term.lastReplyExcerpt(s, 600))}">${this.say(s, st)}</span>${this.canReply(s, st) ? `<input class="tr-reply" placeholder="回一句，回车发送" spellcheck="false" value="${escapeHtml(s._reply || '')}">` : ''}<span class="tr-files"${n ? ` title="本回合改动 ${n} 个文件"` : ''}>${n ? n + ' 文件' : ''}</span></div>`;
   },
   render() {
     const box = $('#term-roster'); if (!box) return;
@@ -4697,7 +4728,10 @@ const roster = {
     if (need !== this._badge && window.fanboxWin && window.fanboxWin.setBadge) { this._badge = need; window.fanboxWin.setBadge(need ? String(need) : ''); }
     $('#btn-terminal').classList.toggle('need', need > 0); // 面板收着时指挥台和呼吸边都看不见：红点挂在「终端」按钮上，点开即处理
     list.some((x) => x.st === 'working') ? this.startTick() : this.stopTick(); // 有人干活就每秒刷标签上的已跑时长
-    const rows = list.filter((x) => this.tier(x.s, x.st));
+    // 排队：等你确认的在前，同一档里等得最久的在前——最上面那行就是下一个该处理的
+    const rows = list.filter((x) => this.tier(x.s, x.st)).sort((a, b) => this.tier(a.s, a.st) - this.tier(b.s, b.st) || a.s._needSince - b.s._needSince);
+    if (rows.length && !this._waitTick) this._waitTick = setInterval(() => { if (!box.matches(':hover')) this.render(); }, 60000); // 「等了多久」每分钟走一格
+    else if (!rows.length && this._waitTick) { clearInterval(this._waitTick); this._waitTick = null; }
     // 正在回复框里打字时不重画：重画会打断输入法，也会丢光标。等离开输入框再补画
     if (document.activeElement && document.activeElement.classList.contains('tr-reply') && box.contains(document.activeElement)) { this._stale = true; return; }
     const show = list.length >= 2 && rows.length > 0;
@@ -4735,7 +4769,7 @@ const roster = {
   stopTick() { clearInterval(this._tick); this._tick = null; },
   // ⌘⌥L：跳到下一个需要你的会话。按优先级排好队，从当前所在位置往后循环，没有就说一声
   next() {
-    const list = term.sessions.map((s) => ({ s, t: this.tier(s, this.stateOf(s)) })).filter((x) => x.t).sort((a, b) => a.t - b.t);
+    const list = term.sessions.map((s) => ({ s, t: this.tier(s, this.stateOf(s)) })).filter((x) => x.t).sort((a, b) => a.t - b.t || a.s._needSince - b.s._needSince);
     if (!list.length) { toast('没有在等你的'); return; }
     const i = list.findIndex((x) => x.s.id === term.active);
     const pick = list[(i + 1) % list.length].s;
@@ -6396,6 +6430,7 @@ if (window.fanboxAgentCtl) {
   });
   if (window.fanboxAgentCtl.onEvent) window.fanboxAgentCtl.onEvent((m) => term.onAgentEvent(m));
   if (window.fanboxAgentCtl.onResume) window.fanboxAgentCtl.onResume((m) => term.onAgentResume(m));
+  if (window.fanboxAgentCtl.onRelay) window.fanboxAgentCtl.onRelay((m) => term.onAgentRelay(m));
 }
 
 init();

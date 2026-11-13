@@ -96,6 +96,8 @@ contextBridge.exposeInMainWorld('fanboxWin', {
   notifySet: (on) => ipcRenderer.invoke('notify:set', { on }),
   autoResumeState: () => ipcRenderer.invoke('resume:state'), // 断线自动续跑开关：{ on }
   autoResumeSet: (on) => ipcRenderer.invoke('resume:set', { on }),
+  relayState: () => ipcRenderer.invoke('relay:state'), // 窗口互通开关：{ on }
+  relaySet: (on) => ipcRenderer.invoke('relay:set', { on }),
 });
 
 // Agent 控制接口（/api/agent/*）的渲染侧配合：main 请求开新终端 tab + 被控 tab 闪标记
@@ -105,6 +107,7 @@ contextBridge.exposeInMainWorld('fanboxAgentCtl', {
   onTouch: (cb) => { const h = (e, m) => cb(m); ipcRenderer.on('agent:touch', h); return () => ipcRenderer.removeListener('agent:touch', h); },
   // agent 官方 hook 事件 { id, state, event, file?, agent }：hooked 终端的忙/等确认/收工由它驱动，不再刮屏
   onEvent: (cb) => { const h = (e, m) => cb(m); ipcRenderer.on('agent:event', h); return () => ipcRenderer.removeListener('agent:event', h); },
+  onRelay: (cb) => { const h = (e, m) => cb(m); ipcRenderer.on('agent:relay', h); return () => ipcRenderer.removeListener('agent:relay', h); },
   onResume: (cb) => { const h = (e, m) => cb(m); ipcRenderer.on('agent:resume', h); return () => ipcRenderer.removeListener('agent:resume', h); },
 });
 
