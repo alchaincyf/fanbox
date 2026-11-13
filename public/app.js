@@ -3008,6 +3008,11 @@ const agentsPop = {
         <span class="ap-name">系统通知</span>
         <span class="ap-flag" data-notify-flag></span>
       </label>
+      <label class="ap-row" data-resume style="display:none" title="Claude Code 因为断网、电脑休眠、超时、服务过载停在半路时，替你敲一句「继续」。等 1、5、15 分钟各试一次，三次不行就不再试；额度用完、要重新登录这类只提醒不代办；输入框里有你打了一半的字时不动">
+        <input type="checkbox">
+        <span class="ap-name">断线自动续跑</span>
+        <span class="ap-flag" data-resume-flag></span>
+      </label>
       <div class="ap-head ap-sub">Agent 互控</div>
       <div class="ap-row" title="装进 ~/.claude/skills 后，翻箱终端里的 claude 就能指挥兄弟窗口：新开窗口 / 读输出 / 发指令 / 等结果">
         <span class="ap-name">fanbox-agent skill</span>
@@ -3025,6 +3030,7 @@ const agentsPop = {
     const wgCb = pop.querySelector('[data-webgl] input');
     if (wgCb) wgCb.onchange = () => { term.setWebgl(wgCb.checked); toast(wgCb.checked ? 'WebGL 渲染已开启' : '已切换兼容渲染（修中文乱码）'); };
     this.markNotify(pop);
+    this.markResume(pop);
     pop.querySelectorAll('.ap-list .ap-row input').forEach((cb) => {
       cb.onchange = async () => {
         const ids = [...pop.querySelectorAll('.ap-list .ap-row input:checked')].map((x) => x.closest('.ap-row').dataset.id);
@@ -3035,6 +3041,19 @@ const agentsPop = {
     });
     this._out = (ev) => { if (!pop.contains(ev.target) && !$('#agent-config').contains(ev.target)) this.close(); };
     document.addEventListener('mousedown', this._out, true);
+  },
+  // 断线自动续跑开关（只有桌面版有：续跑由主进程盯终端输出来做）
+  async markResume(pop) {
+    const row = pop.querySelector('[data-resume]');
+    if (!row || !window.fanboxWin || !window.fanboxWin.autoResumeState) return;
+    const cb = row.querySelector('input'), flag = row.querySelector('[data-resume-flag]');
+    const st = await window.fanboxWin.autoResumeState().catch(() => ({ on: true }));
+    row.style.display = ''; cb.checked = st.on; flag.textContent = st.on ? '' : '已关';
+    cb.onchange = async () => {
+      await window.fanboxWin.autoResumeSet(cb.checked).catch(() => {});
+      flag.textContent = cb.checked ? '' : '已关';
+      toast(cb.checked ? '断线自动续跑已开' : '断线自动续跑已关，断线后要你自己敲「继续」');
+    };
   },
   // 系统通知开关：只有在这里亲手打开时才可能触发系统 / 浏览器的授权询问，开了立刻发一条测试通知当面验证
   async markNotify(pop) {
@@ -4478,6 +4497,7 @@ const term = {
     s.status = 'idle';
     this.renderTabs();
     this.refreshCwd(s);
+    if (event === 'reconcile') return; // 主进程对账纠正的状态：回合早就结束、当时已经提醒过，不再响一次
     if (state === 'needs_permission') {
       this.awaitGlow();
       playChime('ask');
@@ -4490,6 +4510,16 @@ const term = {
       playChime('done');
       if (!document.hasFocus() || s.id !== this.active) this.notify(s, 'agent 任务完成 · ' + (s.title || 'shell'), this.lastReplyExcerpt(s) || (s.title || 'shell') + ' 已空闲');
     }
+  },
+  // 主进程替你敲了「继续」，或者碰上它不代办的故障：说一声，不在场也留一条系统通知
+  onAgentResume({ id, action, attempt, evidence }) {
+    const s = this.sessions.find((x) => x.id === id);
+    if (!s) return;
+    const name = s.title || 'shell', why = String(evidence || '').replace(/^API Error:\s*/, '').slice(0, 80);
+    const msg = action === 'send' ? `${name} 断线了，已替你敲「继续」（第 ${attempt} 次）`
+      : action === 'give_up' ? `${name} 续了 3 次还是断，交给你了` : `${name} 停住了，需要你处理`;
+    toast(msg + (why ? ' · ' + why : ''), action !== 'send');
+    if (action !== 'send' && (!document.hasFocus() || s.id !== this.active)) this.notify(s, msg, why || name);
   },
   ensureStatusTick() {
     if (this._statusTimer) return;
@@ -4639,6 +4669,17 @@ const roster = {
   },
   changed(s) { return state.changeLog.filter((c) => c.termId === s.id).length; },
   say(s, st) { return st === 'dead' ? '' : escapeHtml(term.lastReplyExcerpt(s, 90)); },
+  // 就地回复：agent 说完话在等你（等你输入 / 刚完成）时，不用切过去，在这一行里回一句就行。
+  // 等你确认的不给——那是在批一条具体命令，得看着终端批
+  canReply(s, st) { return !!s.hooked && (st === 'input' || (st === 'idle' && s._fresh)); },
+  reply(s, el) {
+    const text = el.value.trim();
+    if (!text) return;
+    s._reply = ''; el.value = ''; el.blur();
+    term.input(s.id, text);
+    setTimeout(() => term.input(s.id, '\r'), 300); // 字和回车分两次发：一次发 TUI 会当成粘贴，只落在输入框里不提交
+    toast('已发给 ' + (s.title || 'shell'));
+  },
   rowHtml(s, st) {
     const hue = term.hueOf(s.cwd || s.startDir);
     const icon = s.agent ? this.agentIcon(s.agent) : ic('term', `hsl(${hue} 62% 48%)`, 12);
@@ -4646,7 +4687,7 @@ const roster = {
     const n = this.changed(s);
     return `<div class="tr-row st-${st}${s.id === term.active ? ' active' : ''}" data-id="${s.id}" title="点击切到该标签">
       <span class="tr-shape" title="${this.LABEL[st]}">${this.SHAPE[st]}</span><span class="tr-agent">${icon}</span><span class="tr-name">${escapeHtml(s.title || 'shell')}</span>
-      <span class="tr-st">${this.LABEL[st]}</span>${fresh}<span class="tr-say">${this.say(s, st)}</span><span class="tr-files"${n ? ` title="本回合改动 ${n} 个文件"` : ''}>${n ? n + ' 文件' : ''}</span></div>`;
+      <span class="tr-st">${this.LABEL[st]}</span>${fresh}<span class="tr-say" title="${st === 'dead' ? '' : escapeHtml(term.lastReplyExcerpt(s, 600))}">${this.say(s, st)}</span>${this.canReply(s, st) ? `<input class="tr-reply" placeholder="回一句，回车发送" spellcheck="false" value="${escapeHtml(s._reply || '')}">` : ''}<span class="tr-files"${n ? ` title="本回合改动 ${n} 个文件"` : ''}>${n ? n + ' 文件' : ''}</span></div>`;
   },
   render() {
     const box = $('#term-roster'); if (!box) return;
@@ -4657,12 +4698,25 @@ const roster = {
     $('#btn-terminal').classList.toggle('need', need > 0); // 面板收着时指挥台和呼吸边都看不见：红点挂在「终端」按钮上，点开即处理
     list.some((x) => x.st === 'working') ? this.startTick() : this.stopTick(); // 有人干活就每秒刷标签上的已跑时长
     const rows = list.filter((x) => this.tier(x.s, x.st));
+    // 正在回复框里打字时不重画：重画会打断输入法，也会丢光标。等离开输入框再补画
+    if (document.activeElement && document.activeElement.classList.contains('tr-reply') && box.contains(document.activeElement)) { this._stale = true; return; }
     const show = list.length >= 2 && rows.length > 0;
     box.classList.toggle('hidden', !show);
     if (!show) box.innerHTML = '';
     else {
       box.innerHTML = rows.map(({ s, st }) => this.rowHtml(s, st)).join('');
-      box.querySelectorAll('.tr-row').forEach((el) => { el.onclick = () => term.activate(el.dataset.id); });
+      box.querySelectorAll('.tr-row').forEach((el) => {
+        el.onclick = (ev) => { if (!ev.target.classList.contains('tr-reply')) term.activate(el.dataset.id); };
+        const inp = el.querySelector('.tr-reply'), s = term.sessions.find((x) => x.id === el.dataset.id);
+        if (!inp || !s) return;
+        inp.oninput = () => { s._reply = inp.value; };
+        inp.onkeydown = (ev) => {
+          ev.stopPropagation(); // 别让全局快捷键吃掉
+          if (ev.key === 'Enter' && !ev.isComposing && ev.keyCode !== 229) { ev.preventDefault(); this.reply(s, inp); }
+          else if (ev.key === 'Escape') inp.blur();
+        };
+        inp.onblur = () => { if (this._stale) { this._stale = false; this.render(); } };
+      });
     }
     const h = show ? box.offsetHeight : 0;
     if (h !== this._h) { this._h = h; term.fitActive(); } // 条的高度变了（出现/消失/行数变）xterm 得重新量行数
@@ -6341,6 +6395,7 @@ if (window.fanboxAgentCtl) {
     setTimeout(() => term.renderTabs(), 8200); // 标记过期后重画抹掉
   });
   if (window.fanboxAgentCtl.onEvent) window.fanboxAgentCtl.onEvent((m) => term.onAgentEvent(m));
+  if (window.fanboxAgentCtl.onResume) window.fanboxAgentCtl.onResume((m) => term.onAgentResume(m));
 }
 
 init();

@@ -38,6 +38,9 @@ const termWaiters = new Map(); // id -> Set<fn(text)>，wait 的增量输出订�
 // id -> { agent, sessionId, state, since, lastEventAt, hooked:true, changed: Map(path -> {n, lastAt, tool}) }
 // agent 官方 hooks 报来的事实（见 writeHookFiles / agentEvent）。有这条记录的终端，忙闲不再刮终端文本
 const termFacts = new Map();
+const agentState = require('../lib/agent-state');
+const autoResume = require('../lib/auto-resume');
+const resumeFacts = new Map(); // id -> 这个终端当前这次故障的续跑记录（见 autoResumeTick）
 
 // ---------- Agent 官方 hooks：让 claude/codex 自己汇报「在干活 / 等确认 / 干完了」，取代刮终端文本 ----------
 // 启动时把两份静态文件写到 ~/.fanbox/hooks/：claude 走 `--settings 文件` 叠加（不动用户自己的
@@ -218,6 +221,8 @@ app.whenReady().then(() => {
   if (process.platform === 'darwin') trySetDisableSleep(false);
   // agent 忙闲轮询：开着「合盖继续干活」时每 30s 结算一次（所有终端收工、缓冲到期后恢复休眠靠它）
   setInterval(() => { if (lidIntent && terminals.size) refreshLidGuard(); }, 30000);
+  setInterval(settleAgentStates, 30000);
+  setInterval(autoResumeTick, 20000);
   buildMenu();
   try {
     const m = Menu.getApplicationMenu();
@@ -485,6 +490,9 @@ ipcMain.handle('notify:state', async () => {
   return { on: pref === false ? false : (pref === true || registered), pref: typeof pref === 'boolean' ? pref : null, registered };
 });
 ipcMain.handle('notify:set', (e, { on } = {}) => { writeConfig({ systemNotify: !!on }); return { ok: true }; });
+// 断线自动续跑：默认开，设置里可关（~/.fanbox/config.json 的 autoResume）
+ipcMain.handle('resume:state', () => ({ on: readConfig().autoResume !== false }));
+ipcMain.handle('resume:set', (e, { on } = {}) => { writeConfig({ autoResume: !!on }); if (!on) resumeFacts.clear(); return { ok: true }; });
 
 // 预览全屏时藏掉左上角红黄绿系统按钮——它和右侧自家关闭图标太像，容易让人误点
 ipcMain.handle('win:traffic', (e, { show }) => {
@@ -916,6 +924,7 @@ ipcMain.handle('pty:spawn', (e, { id, cwd, cols, rows, theme }) => {
     termBufs.delete(id);
     termLastOut.delete(id);
     termFacts.delete(id);
+    resumeFacts.delete(id);
     refreshLidGuard(); // 最后一个终端退出即恢复休眠
     recStop(id);
     if (win && !win.isDestroyed()) win.webContents.send('pty:exit', { id, exitCode });
@@ -1045,7 +1054,7 @@ async function agentList() {
   return { ok: true, terminals: arr };
 }
 // 官方 hook 事件入口（/api/agent/event → RPC → 这里）。claude 看 hook_event_name，codex 看 type。
-// 状态机：SessionStart/UserPromptSubmit/PreToolUse → working；Notification permission_prompt → needs_permission；
+// 状态机（claude 部分在 lib/agent-state.js）：SessionStart/UserPromptSubmit/PreToolUse → working；Notification permission_prompt → needs_permission；
 // idle_prompt / agent_needs_input → needs_input；Stop / agent_completed → done；SessionEnd → ended（事实随即清掉，
 // 裸 shell 回到旧判据）；codex 的 *turn-complete → done，其他 → working。每个事件都广播给渲染层。
 function agentEvent(termId, body) {
@@ -1062,17 +1071,9 @@ function agentEvent(termId, body) {
   if (kind === 'claude') {
     f.agent = 'claude'; event = b.hook_event_name;
     if (b.session_id) f.sessionId = String(b.session_id);
-    if (event === 'SessionStart' || event === 'UserPromptSubmit' || event === 'PreToolUse' || event === 'SubagentStop') state = 'working';
-    else if (event === 'Stop') state = 'done';
-    else if (event === 'SessionEnd') state = 'ended';
-    else if (event === 'Notification') {
-      const nt = String(b.notification_type || '');
-      if (nt === 'permission_prompt') state = 'needs_permission';
-      else if (nt === 'idle_prompt' || nt === 'agent_needs_input') state = 'needs_input';
-      else if (nt === 'agent_completed') state = 'done';
-      event += ':' + nt;
-    } else if (event === 'PostToolUse') {
-      state = 'working';
+    if (typeof b.transcript_path === 'string' && !b.agent_id) f.transcript = b.transcript_path; // 对账用，见 settleAgentStates
+    ({ state, event } = agentState.claudeNext(f, b, now));
+    if (b.hook_event_name === 'PostToolUse') {
       const tool = String(b.tool_name || '');
       const p = b.tool_input && (b.tool_input.file_path || b.tool_input.notebook_path);
       if (tool !== 'Bash' && typeof p === 'string' && p) { // Bash 不记文件：改了什么它自己也说不清
@@ -1090,11 +1091,47 @@ function agentEvent(termId, body) {
   }
   const changed = state !== f.state;
   if (changed) f.since = now;
+  if (changed && (state === 'done' || state === 'needs_input')) f.restAt = now;
   f.state = state; f.lastEventAt = now;
   if (win && !win.isDestroyed()) win.webContents.send('agent:event', { id, state, event, file: file || undefined, agent: f.agent });
   if (state === 'ended') termFacts.delete(id);
   if (changed) refreshLidGuard(); // 收工/开工立刻结算电源守卫，不等 30s 轮询
   return { ok: true, id, state };
+}
+// 对账：状态停在 working、90 秒没有任何事件、会话日志却说回合早就结束了——把它改回 done。
+// 钩子事件会丢、会乱序、以后还可能多出新的事件种类；只靠事件，错一次就一直错到用户下次发话
+function settleAgentStates() {
+  const now = Date.now();
+  let any = false;
+  for (const [id, f] of termFacts) {
+    if (!agentState.shouldSettle(f, now)) continue;
+    f.state = 'done'; f.since = now; any = true; // 不记 restAt：那 3 秒窗口只为 Stop 之后迟到的事件留，对账之后来的工具事件是真的又开工了
+    if (win && !win.isDestroyed()) win.webContents.send('agent:event', { id, state: 'done', event: 'reconcile', agent: f.agent });
+  }
+  if (any) refreshLidGuard();
+}
+// 断线自动续跑：claude 因为断网、休眠、超时、过载停在半路时替人敲「继续」。判据和退避在 lib/auto-resume.js：
+// 只认瞬时故障；额度用完、要重新登录只提醒；屏幕 10 秒内还在动、输入框里有字都不插手；1/5/15 分钟退避，三次不行交给人
+function autoResumeTick() {
+  if (readConfig().autoResume === false) return;
+  const now = Date.now();
+  for (const [id, p] of terminals) {
+    const f = termFacts.get(id);
+    if (!(f ? f.agent === 'claude' : /^claude/i.test((p && p.process) || ''))) { resumeFacts.delete(id); continue; }
+    if (now - (termLastOut.get(id) || 0) < 10000) continue;
+    const { kind, evidence } = autoResume.classify((termBufs.get(id) || '').split('\n').slice(-60).join('\n'));
+    if (kind === 'ok' || kind === 'empty') { resumeFacts.delete(id); continue; }
+    let e = resumeFacts.get(id);
+    if (!e) resumeFacts.set(id, e = {});
+    const d = autoResume.decide(e, kind, evidence, now);
+    if (!d) continue;
+    if (d.action === 'send') {
+      // 字和回车分两次写：一次写进去 TUI 会当成粘贴，只落在输入框里不提交
+      try { p.write('继续'); recEvent(id, 'i', '继续\r'); setTimeout(() => { try { p.write('\r'); } catch { /* 终端刚好退了 */ } }, 300); }
+      catch { continue; }
+    }
+    if (win && !win.isDestroyed()) win.webContents.send('agent:resume', { id, action: d.action, attempt: d.attempt, evidence });
+  }
 }
 function agentRead(id, lines) {
   if (!terminals.has(id)) return { ok: false, error: 'no such terminal' };

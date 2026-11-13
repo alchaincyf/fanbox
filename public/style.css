@@ -1489,6 +1489,10 @@ body { transition: background-color 0.28s ease, color 0.28s ease; }
 .tr-tag { flex: none; padding: 0 5px; border-radius: 99px; font-size: 10px; line-height: 15px; color: var(--accent-ink); background: var(--accent); }
 .tr-say { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--text-faint); }
 .tr-files { flex: none; color: var(--text-dim); }
+/* 就地回复：平时收成一小格，点进去才展开，不抢「它说了什么」的位置 */
+.tr-reply { flex: 0 1 150px; min-width: 90px; height: 17px; padding: 0 6px; font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 4px; outline: none; cursor: text; }
+.tr-reply::placeholder { color: var(--text-faint); }
+.tr-reply:focus { flex-basis: 420px; border-color: var(--accent); }
 [data-theme="editorial"] .tr-row.active { border-left-width: 3px; }
 
 /* 用量详情沿用侧栏配色，可用键盘展开，不挤占常驻面板。 */
