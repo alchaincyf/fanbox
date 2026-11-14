@@ -56,6 +56,10 @@ setTimeout(() => { console.error('超过 90 秒没跑完'); process.exit(1); }, 
   assert.equal(await row.locator('[data-always-flag]').textContent(), '未连微信或飞书');
   assert.deepEqual(await win.evaluate(() => window.fanboxWin.reachState()), { ok: true, alwaysOn: true, wechat: false, feishu: false });
 
+  // 标签栏常驻三个 agent，DeepSeek Harness 排在 Codex 后面；清单里没有只能打开桌面应用的条目
+  assert.deepEqual(await win.evaluate(() => [...document.querySelectorAll('button[data-agent]')].map((b) => b.dataset.agent)), ['claude', 'codex', 'dsh']);
+  assert.equal(await win.evaluate(() => AGENT_REGISTRY.some((a) => a.app || /^open -a /.test(a.cmd))), false);
+
   // 侧栏也有一个「离开时叫我」：和设置里是同一个状态。没连通道时开关亮着但圆点不亮
   const side = win.locator('#pw-reach');
   assert.equal(await side.isVisible(), true, '侧栏有这一行');
