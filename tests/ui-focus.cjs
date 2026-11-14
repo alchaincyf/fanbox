@@ -23,6 +23,8 @@ class BW extends electron.BrowserWindow {
 const proxy = new Proxy(electron, { get: (t, k) => (k === 'BrowserWindow' ? BW : t[k]) });
 const load = Module._load; Module._load = function (r, ...a) { return r === 'electron' ? proxy : load.call(this, r, ...a); };
 electron.app.focus = () => {};
+electron.dialog.showErrorBox = (t, m) => { console.error('[main error]', t, m); process.exit(1); }; // 主进程报错不许弹到用户屏幕上
+process.on('uncaughtException', (e) => { console.error('[main error]', e); process.exit(1); });
 electron.app.whenReady().then(() => { try { electron.app.dock.hide(); } catch {} });
 require(${JSON.stringify(path.join(ROOT, 'electron', 'main.js'))});`);
 

@@ -42,6 +42,7 @@ const agentState = require('../lib/agent-state');
 const autoResume = require('../lib/auto-resume');
 const resumeFacts = new Map(); // id -> 这个终端当前这次故障的续跑记录（见 autoResumeTick）
 const relay = require('../lib/relay');
+const notify = require('../lib/notify'); // 叫人：终端里的 agent 给用户发消息（见 agentNotify）
 const relayLog = relay.createLog(); // 窗口互通的内存日志：各窗口里你的原话、agent 改的文件（见 agentRelay）。不落盘
 const relaySeqs = new Map(); // id -> 这个窗口收到第几条了。跟窗口走不跟会话走：同一个窗口里重开 claude，接着上次的收
 const agentSentAt = new Map(); // id -> [{ text, at }]：别的 agent 经 /send 发进这个窗口的话（留最近 10 条、10 分钟）。那不是你说的，不当成你的话转告
@@ -54,6 +55,7 @@ const relayOn = () => (relayOnCache === null ? (relayOnCache = readConfig().rela
 // ~/.claude/settings.json），codex 走 `-c notify=[脚本]`。命令里的 $FANBOX_* 由 pty 环境展开，
 // 所以文件内容对所有终端相同。--noproxy：用户开着系统代理时 curl 127.0.0.1 会被拦掉（实测）。
 const HOOKS_DIR = () => path.join(os.homedir(), '.fanbox', 'hooks');
+const BIN_DIR = () => path.join(os.homedir(), '.fanbox', 'bin'); // 终端 PATH 里多出来的一个目录：fanbox-notify
 const HOOK_CURL = `curl -s --noproxy '*' -m 3 -X POST "$FANBOX_CTL/event" -H "x-fanbox-token: $FANBOX_CTL_TOKEN" -H "x-fanbox-term: $FANBOX_TERM_ID" -H 'content-type: application/json' --data-binary`;
 function writeHookFiles() {
   try {
@@ -85,6 +87,16 @@ function writeHookFiles() {
       'for last; do :; done',
       `[ -n "$FANBOX_CTL" ] && ${HOOK_CURL} "$last" >/dev/null 2>&1`,
       orig.length ? `exec ${orig.map(q).join(' ')} "$@"` : 'exit 0', ''].join('\n');
+    // fanbox-notify：任何终端里的 agent（或一条普通命令）叫人用的。内容走表单编码，不用在 shell 里拼 JSON
+    const binDir = BIN_DIR();
+    fs.mkdirSync(binDir, { recursive: true });
+    const nsh = ['#!/bin/sh', '# FanBox 启动时生成。用法：fanbox-notify "要说的话"，或者 命令 | fanbox-notify',
+      '[ -n "$FANBOX_CTL" ] || { echo "fanbox-notify：不在 FanBox 的终端里，没有发" >&2; exit 1; }',
+      'if [ $# -gt 0 ]; then text="$*"; else text=$(cat); fi',
+      `out=$(printf '%s' "$text" | curl -s --noproxy '*' -m 5 -X POST "$FANBOX_CTL/notify" -H "x-fanbox-token: $FANBOX_CTL_TOKEN" -H "x-fanbox-term: $FANBOX_TERM_ID" --data-urlencode text@-) || { echo "fanbox-notify：连不上 FanBox，没有发" >&2; exit 1; }`,
+      'printf \'%s\\n\' "$out"', 'case "$out" in *\'"ok":true\'*) exit 0;; *) exit 2;; esac', ''].join('\n');
+    fs.writeFileSync(path.join(binDir, 'fanbox-notify'), nsh);
+    fs.chmodSync(path.join(binDir, 'fanbox-notify'), 0o755);
     const shPath = path.join(dir, 'codex-notify.sh');
     fs.writeFileSync(shPath, sh);
     fs.chmodSync(shPath, 0o755);
@@ -909,6 +921,7 @@ ipcMain.handle('pty:spawn', (e, { id, cwd, cols, rows, theme }) => {
     // 终端里的 agent 天生知道自己是几号窗口、控制接口在哪、门票是啥——skill 零配置（见 docs/12）
     FANBOX_TERM_ID: id, FANBOX_CTL: `http://127.0.0.1:${PORT}/api/agent`, FANBOX_CTL_TOKEN: AGENT_TOKEN,
   };
+  if (process.platform !== 'win32') env.PATH = (env.PATH || '/usr/bin:/bin') + ':' + BIN_DIR();
   if (!/UTF-8/i.test(env.LC_ALL || env.LC_CTYPE || env.LANG || '')) env.LANG = 'zh_CN.UTF-8';
   let p;
   try {
@@ -1130,13 +1143,47 @@ function agentEvent(termId, body) {
 function agentRelay(termId, body) {
   const id = String(termId || ''), b = body && typeof body === 'object' ? body : {};
   const f = termFacts.get(id);
-  if (!f || !relayOn() || b.agent_id || typeof b.hook_event_name !== 'string') return { ok: true, out: '' };
+  if (!f || b.agent_id || typeof b.hook_event_name !== 'string') return { ok: true, out: '' };
   const now = Date.now();
-  const got = relay.collect(relayLog, id, { cwd: f.cwd || '', files: new Set(f.changed.keys()), home: os.homedir() }, relaySeqs.get(id) || 0, now);
-  relaySeqs.set(id, got.seq);
-  const text = relay.format(got, (t) => { const o = termFacts.get(t); return ((o && o.cwd && path.basename(o.cwd)) || '终端') + ' ' + t; }, now);
-  if (text && win && !win.isDestroyed()) win.webContents.send('agent:relay', { id, said: got.said.length, edits: got.edits.length, from: [...new Set([...got.said, ...got.edits].map((x) => x.term))] });
+  let text = '';
+  if (relayOn()) {
+    const got = relay.collect(relayLog, id, { cwd: f.cwd || '', files: new Set(f.changed.keys()), home: os.homedir() }, relaySeqs.get(id) || 0, now);
+    relaySeqs.set(id, got.seq);
+    text = relay.format(got, (t) => { const o = termFacts.get(t); return ((o && o.cwd && path.basename(o.cwd)) || '终端') + ' ' + t; }, now);
+    if (text && win && !win.isDestroyed()) win.webContents.send('agent:relay', { id, said: got.said.length, edits: got.edits.length, from: [...new Set([...got.said, ...got.edits].map((x) => x.term))] });
+  }
+  // 叫人：连了微信或飞书、值守开着时，每个会话第一次发话告诉它一次有 fanbox-notify、什么时候该用
+  if (b.hook_event_name === 'UserPromptSubmit' && notifyBriefed.get(id) !== (b.session_id || '') && wechatInited && wechatBridge.alwaysOn && wechatBridge.canNotify()) {
+    notifyBriefed.set(id, b.session_id || '');
+    text = [text, notify.BRIEF].filter(Boolean).join('\n\n');
+  }
   return { ok: true, out: relay.hookOutput(b.hook_event_name, text) };
+}
+// 叫人（/api/agent/notify，终端里的 fanbox-notify 调这里）：某个窗口里的 agent 或一条命令要给用户发消息。
+// 人在电脑前（2 分钟内有键鼠输入）只在界面上提示；不在才进发件箱发到手机。判断在 lib/notify.js
+const notifyBriefed = new Map(); // 终端 id -> 已经告诉过的会话 id
+const notifyLast = new Map();    // 终端 id -> { at, text }：挡重复和写错的循环；waitingWatch 也看它，免得同一件事叫两次
+function agentNotify(termId, body) {
+  const id = String(termId || ''), text = notify.clean(body && body.text);
+  ensureWechat();
+  let idleS = 0;
+  try { idleS = fakeIdle() ?? powerMonitor.getSystemIdleTime(); } catch { /* 读不到当作在电脑前 */ }
+  const now = Date.now();
+  const d = notify.decide(text, { on: wechatBridge.alwaysOn, channel: wechatBridge.canNotify(), idleS, last: notifyLast.get(id) }, now);
+  const f = termFacts.get(id);
+  const name = (f && f.cwd && path.basename(f.cwd)) || '终端';
+  if (d.action === 'desktop' || d.action === 'phone') notifyLast.set(id, { at: now, text });
+  if (d.action === 'desktop' && win && !win.isDestroyed()) win.webContents.send('agent:notify', { id, text, to: 'desktop' });
+  if (d.action === 'phone') {
+    wechatBridge.notify(notify.label(text, id, name), { from: 'notify', term: id });
+    if (win && !win.isDestroyed()) win.webContents.send('agent:notify', { id, text, to: 'phone' });
+  }
+  return { ok: d.action !== 'reject', delivered: d.action, why: d.why, note: d.note };
+}
+// 测试用：非打包环境下，FANBOX_FAKE_IDLE 指向的文件里写着的秒数顶替系统空闲时间（系统的读数没法在测试里摆布）
+function fakeIdle() {
+  if (app.isPackaged || !process.env.FANBOX_FAKE_IDLE) return undefined;
+  try { return Number(fs.readFileSync(process.env.FANBOX_FAKE_IDLE, 'utf8')) || 0; } catch { return undefined; }
 }
 // 对账：状态停在 working、90 秒没有任何事件、会话日志却说回合早就结束了——把它改回 done。
 // 钩子事件会丢、会乱序、以后还可能多出新的事件种类；只靠事件，错一次就一直错到用户下次发话
@@ -1155,13 +1202,16 @@ function settleAgentStates() {
 // 同一次等待只送一次（key 带上进入这个状态的时刻）
 const WAIT_NOTIFY_MS = 10 * 60000, AWAY_IDLE_S = 300;
 function waitingWatch() {
-  if (!wechatInited || !terminals.size) return;
+  if (!terminals.size) return;
+  ensureWechat(); // 只连了飞书的人没打开过微信面板，这里也要能送出去
   let idle = 0;
-  try { idle = powerMonitor.getSystemIdleTime(); } catch { return; }
+  try { idle = fakeIdle() ?? powerMonitor.getSystemIdleTime(); } catch { return; }
   if (idle < AWAY_IDLE_S) return;
   const now = Date.now();
   for (const [id, f] of termFacts) {
     if ((f.state !== 'needs_input' && f.state !== 'needs_permission') || now - f.since < WAIT_NOTIFY_MS) continue;
+    const nl = notifyLast.get(id);
+    if (nl && nl.at > f.since - 5 * 60000) continue; // 它停下来前后自己已经用 fanbox-notify 说过了
     wechatBridge.event('term_waiting', `wait:${id}:${f.since}`, { id, name: (f.cwd && path.basename(f.cwd)) || id, state: f.state, minutes: Math.round((now - f.since) / 60000), tail: (termTails.get(id) || '').slice(-600) });
   }
 }
@@ -1273,7 +1323,7 @@ function agentKill(id) {
   catch (e) { return { ok: false, error: String(e && e.message || e) }; }
 }
 // server.js 在子进程里经 RPC 桥调这组能力（见 startBackendServer）；token 走 fork env
-const agentImpl = { list: agentList, read: agentRead, send: agentSend, create: agentCreate, wait: agentWait, kill: agentKill, event: agentEvent, relay: agentRelay };
+const agentImpl = { list: agentList, read: agentRead, send: agentSend, create: agentCreate, wait: agentWait, kill: agentKill, event: agentEvent, relay: agentRelay, notify: agentNotify };
 
 // ---------- 录制文件管理 IPC ----------
 // 列表：读每个 .cast 的头行拿元信息 + 文件大小/时长（末事件时间），按新→旧。失败的文件跳过不报错。
@@ -1484,6 +1534,8 @@ ipcMain.handle('wechat:env', async () => { ensureWechat(); return wechatBridge.e
 ipcMain.handle('wechat:setTarget', (e, { target } = {}) => { ensureWechat(); return wechatBridge.setTarget(target); });
 ipcMain.handle('wechat:setCwd', (e, { dir } = {}) => { ensureWechat(); return wechatBridge.setCwd(dir); });
 ipcMain.handle('wechat:alwaysOn', (e, { on } = {}) => { ensureWechat(); return typeof on === 'boolean' ? wechatBridge.setAlwaysOn(on) : { ok: true, alwaysOn: wechatBridge.alwaysOn, connected: wechatBridge.isConnected() }; });
+ipcMain.handle('reach:state', () => { ensureWechat(); return wechatBridge.channelState(); });
+ipcMain.handle('reach:setFeishu', (e, { url, secret } = {}) => { ensureWechat(); return wechatBridge.setFeishu(url, secret); });
 ipcMain.handle('wechat:setPersona', (e, { persona } = {}) => { ensureWechat(); return wechatBridge.setPersona(persona); });
 ipcMain.handle('wechat:send', async (e, { text } = {}) => { ensureWechat(); return wechatBridge.sendDesktop(text); });
 ipcMain.handle('wechat:conversation', (e, { id } = {}) => { ensureWechat(); return wechatBridge.conversation(id); });

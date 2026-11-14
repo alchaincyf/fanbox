@@ -98,6 +98,8 @@ contextBridge.exposeInMainWorld('fanboxWin', {
   autoResumeSet: (on) => ipcRenderer.invoke('resume:set', { on }),
   alwaysOnState: () => ipcRenderer.invoke('wechat:alwaysOn', {}), // 微信值守开关：{ alwaysOn, connected }
   alwaysOnSet: (on) => ipcRenderer.invoke('wechat:alwaysOn', { on }),
+  reachState: () => ipcRenderer.invoke('reach:state'), // 叫人的通道：{ alwaysOn, wechat, feishu }
+  feishuSet: (url, secret) => ipcRenderer.invoke('reach:setFeishu', { url, secret }), // 连飞书群机器人；空地址 = 断开
   relayState: () => ipcRenderer.invoke('relay:state'), // 窗口互通开关：{ on }
   relaySet: (on) => ipcRenderer.invoke('relay:set', { on }),
 });
@@ -109,6 +111,7 @@ contextBridge.exposeInMainWorld('fanboxAgentCtl', {
   onTouch: (cb) => { const h = (e, m) => cb(m); ipcRenderer.on('agent:touch', h); return () => ipcRenderer.removeListener('agent:touch', h); },
   // agent 官方 hook 事件 { id, state, event, file?, agent }：hooked 终端的忙/等确认/收工由它驱动，不再刮屏
   onEvent: (cb) => { const h = (e, m) => cb(m); ipcRenderer.on('agent:event', h); return () => ipcRenderer.removeListener('agent:event', h); },
+  onNotify: (cb) => { const h = (e, m) => cb(m); ipcRenderer.on('agent:notify', h); return () => ipcRenderer.removeListener('agent:notify', h); },
   onRelay: (cb) => { const h = (e, m) => cb(m); ipcRenderer.on('agent:relay', h); return () => ipcRenderer.removeListener('agent:relay', h); },
   onResume: (cb) => { const h = (e, m) => cb(m); ipcRenderer.on('agent:resume', h); return () => ipcRenderer.removeListener('agent:resume', h); },
 });

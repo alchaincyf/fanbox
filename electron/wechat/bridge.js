@@ -8,6 +8,7 @@ const fs = require('fs');
 const ilink = require('./ilink');
 const driver = require('./driver');
 const memory = require('./memory');
+const nt = require('../../lib/notify');   // 叫人：判断、文案、飞书请求体
 const ao = require('../../lib/always-on'); // 常驻值守：事件收件箱 / 定时器 / 发件箱三张表和规则
 
 let DATA_DIR = null;
@@ -18,6 +19,13 @@ function dataDir() {
   return DATA_DIR;
 }
 const f = (name) => path.join(dataDir(), name);
+// 飞书地址只认官方域名。测试时（非打包环境）FANBOX_FAKE_FEISHU 指定的本机地址也放行
+function feishuUrlOk(url) {
+  if (nt.isFeishuUrl(url)) return true;
+  const fake = process.env.FANBOX_FAKE_FEISHU;
+  let packaged = false; try { packaged = require('electron').app.isPackaged; } catch { /* 单测里没有 electron */ }
+  return !!fake && !packaged && /^http:\/\/127\.0\.0\.1:\d+\//.test(fake) && String(url || '').startsWith(fake);
+}
 const now = () => { const d = new Date(); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
 
 // 微信场景默认人格：claude/codex 桌面端很啰嗦，手机上刷屏难受——注入这条让回复适配手机。可自定义。
@@ -117,6 +125,7 @@ const bridge = {
     this.aoState = ao.recover(ao.load(f('always.json')), Date.now());
     if (!this.aoTimer) { this.aoTimer = setInterval(() => this.aoTick().catch(() => {}), 30000); if (this.aoTimer.unref) this.aoTimer.unref(); }
     this.account = ilink.readJson(f('account.json'), null);
+    this.feishu = ilink.readJson(f('feishu.json'), null);
     driver.warmEnv(); // 启动时预热「终端环境复刻」(抓 PATH/代理)，免得第一条微信消息卡几百毫秒
     if (this.account && this.account.token) { this.startPolling(); this.fireConnChange(); } // 已登录则自动恢复收消息
     this.aoReplay();
@@ -427,6 +436,37 @@ const bridge = {
     (this.msgQueue[from] = this.msgQueue[from] || []).push({ ...msg, __inboxId: ev.id });
     this.drainQueue(from);
   },
+  // ---------- 叫人的通道：微信（已连且手机那头说过话）、飞书（配了群机器人地址）----------
+  hasFeishu() { return !!(this.feishu && feishuUrlOk(this.feishu.url)); },
+  hasWechat() { return this.isConnected() && !!this.ownerCid(); },
+  canNotify() { return this.hasWechat() || this.hasFeishu(); },
+  channelState() { return { ok: true, alwaysOn: this.alwaysOn, wechat: this.hasWechat(), feishu: this.hasFeishu() }; },
+  async sendFeishu(text) {
+    try {
+      const r = await ilink.httpJson(this.feishu.url, { headers: { 'Content-Type': 'application/json' }, body: nt.feishuBody(text, this.feishu.secret || '', Date.now()), timeoutMs: 10000 });
+      return nt.feishuOk(r.json) ? { ok: true } : { ok: false, err: JSON.stringify(r.json || {}).slice(0, 160) };
+    } catch (e) { return { ok: false, err: String(e && e.message || e).slice(0, 160) }; }
+  },
+  // 连飞书：填群机器人的 webhook 地址（可选签名密钥）。保存前真发一条，发不出去就不存。传空地址 = 断开
+  async setFeishu(url, secret) {
+    url = String(url || '').trim(); secret = String(secret || '').trim();
+    if (!url) { this.feishu = null; try { fs.unlinkSync(f('feishu.json')); } catch { /* 本来就没有 */ } return this.channelState(); }
+    if (!feishuUrlOk(url)) return { ok: false, error: '这不是飞书群机器人的地址。应当是 https://open.feishu.cn/open-apis/bot/v2/hook/ 开头的那一串' };
+    const prev = this.feishu;
+    this.feishu = { url, secret };
+    const r = await this.sendFeishu('FanBox 已连上这个群。之后终端里的 agent 需要你时，会在这里叫你。');
+    if (!r.ok) { this.feishu = prev; return { ok: false, error: '发不出去：' + r.err + (secret ? '' : '。机器人如果开了「签名校验」，要把密钥一起填上；开了「自定义关键词」的话，关键词里加上 FanBox') }; }
+    ao.save(f('feishu.json'), this.feishu); // 0600：地址本身就是发消息的凭据
+    return this.channelState();
+  },
+  // 发一条给用户：进发件箱，按节奏（免打扰、间隔、日上限）发到手机
+  notify(text, meta) {
+    const m = ao.outboxAdd(this.aoState, text, Date.now(), meta);
+    if (!m) return null;
+    this.aoSave();
+    this.aoDispatch().catch(() => {});
+    return m;
+  },
   // ---------- 常驻值守（lib/always-on.js 的接线）----------
   aoSave() { ao.save(f('always.json'), this.aoState); },
   aoLog(o) { try { fs.appendFileSync(f('always.log'), JSON.stringify({ t: new Date().toISOString(), ...o }) + '\n'); } catch { /* */ } },
@@ -437,7 +477,17 @@ const bridge = {
   },
   // 事件入口：主进程把「窗口等你太久」「断线续不上」这类事送进来。只入箱、立刻返回
   event(kind, key, payload) {
-    if (!this.alwaysOn || !this.isConnected() || !this.ownerCid() || this.target !== 'claude') return false; // 只读运行目前只对 Claude Code 验证过，大脑是 Codex 时不值守
+    if (!this.alwaysOn) return false;
+    if (!this.isConnected() || !this.ownerCid() || this.target !== 'claude') { // 只读运行目前只对 Claude Code 验证过，大脑是 Codex 时不值守
+      // 微信那头没有能判断的 agent，但连了飞书：机器生成的两类事件直接发一句话。同一件事只发一次
+      const text = this.hasFeishu() && !this.isConnected() ? nt.plainEvent(kind, payload) : '';
+      if (!text) return false;
+      const seen = (this.aoState.plainSeen = this.aoState.plainSeen || []);
+      if (seen.includes(key)) return false;
+      seen.push(key); if (seen.length > 200) seen.splice(0, seen.length - 200);
+      this.notify(text, { from: kind });
+      return true;
+    }
     const added = ao.inboxAdd(this.aoState, { kind, key, payload }, Date.now());
     if (added) { this.aoSave(); this.aoKick(); }
     return added;
@@ -462,7 +512,8 @@ const bridge = {
     if (now - (this._aoPruneAt || 0) > 3600e3) { this._aoPruneAt = now; ao.prune(this.aoState, now); this.aoSave(); }
     if (ao.timersFire(this.aoState, now)) this.aoSave();
     await this.aoWatch(now);
-    if (this.isConnected()) { this.aoKick(); await this.aoDispatch(); }
+    if (this.isConnected()) this.aoKick();
+    if (this.canNotify()) await this.aoDispatch();
   },
   // 盯梢：到点的命令各跑一遍（登录 shell 环境，和用户终端一致；60 秒封顶），输出交给 watchIngest 找新行
   async aoWatch(now) {
@@ -498,8 +549,8 @@ const bridge = {
   },
   // 派发器：按节奏规则放行一条，发到手机。微信要求带上最近一次收到消息时的 context_token
   async aoDispatch() {
-    const cid = this.ownerCid();
-    if (!cid || !this.isConnected() || this._aoSending) return; // 一次只发一条：调度器和运行收尾可能同时来叫
+    const cid = this.isConnected() ? this.ownerCid() : '';
+    if (!this.canNotify() || this._aoSending) return; // 一次只发一条：调度器和运行收尾可能同时来叫
     this._aoSending = true;
     try { await this.aoDispatchOne(cid); } finally { this._aoSending = false; }
   },
@@ -508,14 +559,21 @@ const bridge = {
     const { msg, hold } = ao.outboxNext(this.aoState, now, this.aoPolicy);
     if (!msg) { if (hold && hold !== 'empty' && this._aoHold !== hold) { this._aoHold = hold; this.aoLog({ outbox: 'hold', why: hold }); } return; }
     this._aoHold = '';
-    const ctx = (this.aoState.ctx || {})[cid] || '';
-    let sent = false, err = '';
-    try { const r = await ilink.sendText(this.account, cid, msg.text, ctx); sent = !!(r && r.ok && !(r.json && ((r.json.ret && r.json.ret !== 0) || (r.json.errcode && r.json.errcode !== 0)))); if (!sent) err = JSON.stringify(r && r.json || {}).slice(0, 160); }
-    catch (e) { err = String(e && e.message || e).slice(0, 160); }
+    let sent = false, err = '', via = '';
+    if (cid) { // 先走微信：他在那头能直接回话
+      const ctx = (this.aoState.ctx || {})[cid] || '';
+      try { const r = await ilink.sendText(this.account, cid, msg.text, ctx); sent = !!(r && r.ok && !(r.json && ((r.json.ret && r.json.ret !== 0) || (r.json.errcode && r.json.errcode !== 0)))); if (!sent) err = JSON.stringify(r && r.json || {}).slice(0, 160); }
+      catch (e) { err = String(e && e.message || e).slice(0, 160); }
+      if (sent) via = 'wechat';
+    }
+    if (!sent && this.hasFeishu()) { // 微信没连或没发出去（隔久了凭据会失效）：走飞书
+      const r = await this.sendFeishu(msg.text);
+      if (r.ok) { sent = true; via = 'feishu'; } else err = [err, 'feishu: ' + r.err].filter(Boolean).join(' | ');
+    }
     ao.outboxMark(this.aoState, msg.id, Date.now(), sent);
     this.aoSave();
-    this.aoLog({ outbox: sent ? 'sent' : 'send_failed', id: msg.id, err, text: msg.text.slice(0, 120) });
-    if (sent) this.push(cid, 'assistant', msg.text, { proactive: true });
+    this.aoLog({ outbox: sent ? 'sent' : 'send_failed', via, id: msg.id, err, text: msg.text.slice(0, 120) });
+    if (sent && via === 'wechat') this.push(cid, 'assistant', msg.text, { proactive: true });
   },
   // 启动时：上次崩在半路、还没回的用户消息（半小时内的）重新排队；别的待处理事件照常唤醒
   aoReplay() {

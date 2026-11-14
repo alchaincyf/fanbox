@@ -127,6 +127,23 @@ curl "${CT[@]}" -X POST -H 'Content-Type: application/json' \
 
 用户在 FanBox 界面上能看到每个窗口实时滚动，被遥控的 tab 会闪 ⚡。
 
+## 叫人：给用户手机发一条消息
+
+用户连了微信或飞书、开着「离开时叫我」时，任何终端里都能用（不限 Claude Code，Codex、Kimi、普通 shell 脚本都行）：
+
+```bash
+fanbox-notify "测试跑完了，3 个没过，都在 auth 模块。要我现在修吗？"
+npm run build && fanbox-notify "构建好了" || fanbox-notify "构建失败，回来看一眼"
+```
+
+- **该发**：跑了几分钟以上的活有了结果；卡住了，不等用户定就没法往下走；出了他必须马上知道的事
+- **不该发**：他正在跟你一来一回说话；中间进度；你自己能定的事；刚发过的同一件事
+- 一两句话，先说结论，再说需要他回什么。不贴日志和长路径
+- 返回的 JSON 里 `delivered` 说明这条去了哪：`phone` 进了发件箱、`desktop` 用户在电脑前只在界面提示、`skip` 重复或太密没发、`reject` 没通道或用户关了（这时不要重试）
+- 夜里 23 点到早上 8 点攒到早上，两条之间至少隔 10 分钟，这些由 FanBox 管
+
+找不到 `fanbox-notify` 命令时直接调接口：`curl "${CT[@]}" -X POST -H "x-fanbox-term: $FANBOX_TERM_ID" --data-urlencode "text=要说的话" "$FANBOX_CTL/notify"`
+
 ## 规矩
 
 - `kill`、发 Ctrl-C、覆盖性命令：先向用户确认，除非用户已明确授权

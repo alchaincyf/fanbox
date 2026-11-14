@@ -1208,6 +1208,11 @@ kbd {
 .agents-pop .ap-ic svg, .agents-pop .ap-ic img { width: 15px; height: 15px; display: block; }
 .agents-pop .ap-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .agents-pop .ap-flag { font-size: 11px; color: var(--yellow); cursor: copy; flex: none; }
+.agents-pop .ap-feishu { display: flex; flex-direction: column; gap: 6px; padding: 2px 12px 10px; }
+.agents-pop .ap-feishu input { font: inherit; font-size: 12px; padding: 5px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); min-width: 0; }
+.agents-pop .ap-feishu-act { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--yellow); }
+.agents-pop .ap-feishu-act button { font: inherit; font-size: 12px; padding: 4px 10px; border: 1px solid var(--accent); border-radius: 6px; background: transparent; color: var(--accent); cursor: pointer; flex: none; }
+.agents-pop .ap-feishu-act button:disabled { opacity: .5; cursor: default; }
 .agents-pop .ap-foot { padding: 8px 12px; font-size: 11px; color: var(--text-dim); border-top: 1px solid var(--border); line-height: 1.7; }
 
 #xterm-host { flex: 1; position: relative; min-height: 0; overflow: hidden; background: var(--bg); }

@@ -3018,11 +3018,20 @@ const agentsPop = {
         <span class="ap-name">窗口互通</span>
         <span class="ap-flag" data-relay-flag></span>
       </label>
-      <label class="ap-row" data-always style="display:none" title="连着微信遥控时生效。某个窗口的 agent 停下来等你满 10 分钟而你不在电脑前、断线续不上、或它自己定的跟进到点时，微信那头的 agent 会醒来看一眼，值得才在微信上叫你；你回一句它替你转进对应窗口。没人触发的这种运行只能看、不能改文件跑命令。夜里 23 点到早上 8 点不发，两条之间至少隔 10 分钟">
+      <label class="ap-row" data-always style="display:none" title="连了微信或飞书时生效。终端里的 agent 需要你、而你不在电脑前时，会发消息到你手机：它自己可以叫你（fanbox-notify），某个窗口停下来等你满 10 分钟、断线续不上时 FanBox 也会叫你。连着微信遥控时，由微信那头的 agent 先看一眼、值得才说，你回一句它替你转进对应窗口。你在电脑前时只在界面上提示。夜里 23 点到早上 8 点不发，两条之间至少隔 10 分钟">
         <input type="checkbox">
-        <span class="ap-name">微信值守</span>
+        <span class="ap-name">离开时叫我</span>
         <span class="ap-flag" data-always-flag></span>
       </label>
+      <div class="ap-row" data-feishu style="display:none" title="把消息发到一个飞书群：群设置 › 群机器人 › 添加机器人 › 自定义机器人，复制 webhook 地址贴进来。只能发、不能在飞书里回话；微信遥控连着时优先发微信，微信发不出去才走飞书">
+        <span class="ap-name">飞书</span>
+        <span class="ap-flag" data-feishu-flag></span>
+      </div>
+      <div class="ap-feishu" data-feishu-form hidden>
+        <input type="text" data-feishu-url placeholder="群机器人的 webhook 地址" spellcheck="false">
+        <input type="text" data-feishu-secret placeholder="签名密钥（没开签名校验就留空）" spellcheck="false">
+        <div class="ap-feishu-act"><button data-feishu-save>连接并发一条试试</button><span data-feishu-msg></span></div>
+      </div>
       <div class="ap-head ap-sub">Agent 互控</div>
       <div class="ap-row" title="装进 ~/.claude/skills 后，翻箱终端里的 claude 就能指挥兄弟窗口：新开窗口 / 读输出 / 发指令 / 等结果">
         <span class="ap-name">fanbox-agent skill</span>
@@ -3054,19 +3063,36 @@ const agentsPop = {
     this._out = (ev) => { if (!pop.contains(ev.target) && !$('#agent-config').contains(ev.target)) this.close(); };
     document.addEventListener('mousedown', this._out, true);
   },
-  // 微信值守开关（只有桌面版有；没连微信时标出来，开着也不会有动作）
+  // 「离开时叫我」开关和飞书连接（只有桌面版有）。没连任何通道时标出来，开着也不会有动作
   async markAlways(pop) {
-    const row = pop.querySelector('[data-always]');
-    if (!row || !window.fanboxWin || !window.fanboxWin.alwaysOnState) return;
+    const row = pop.querySelector('[data-always]'), fw = window.fanboxWin;
+    if (!row || !fw || !fw.reachState) return;
     const cb = row.querySelector('input'), flag = row.querySelector('[data-always-flag]');
-    const st = await window.fanboxWin.alwaysOnState().catch(() => null);
+    const frow = pop.querySelector('[data-feishu]'), fflag = pop.querySelector('[data-feishu-flag]'), form = pop.querySelector('[data-feishu-form]');
+    const url = form.querySelector('[data-feishu-url]'), secret = form.querySelector('[data-feishu-secret]'), msg = form.querySelector('[data-feishu-msg]'), save = form.querySelector('[data-feishu-save]');
+    let st = await fw.reachState().catch(() => null);
     if (!st) return;
-    const mark = (on) => { flag.textContent = !on ? '已关' : st.connected ? '' : '未连微信'; };
-    row.style.display = ''; cb.checked = st.alwaysOn; mark(st.alwaysOn);
+    const mark = () => {
+      flag.textContent = !cb.checked ? '已关' : st.wechat ? (st.feishu ? '微信＋飞书' : '微信') : st.feishu ? '飞书' : '未连微信或飞书';
+      fflag.textContent = st.feishu ? '已连 · 断开' : '连接';
+    };
+    row.style.display = ''; frow.style.display = ''; cb.checked = st.alwaysOn; mark();
     cb.onchange = async () => {
-      await window.fanboxWin.alwaysOnSet(cb.checked).catch(() => {});
-      mark(cb.checked);
-      toast(cb.checked ? '微信值守已开' : '微信值守已关，微信那头只在你发消息时应答');
+      await fw.alwaysOnSet(cb.checked).catch(() => {});
+      mark();
+      toast(cb.checked ? '离开时叫我：已开' : '离开时叫我：已关，agent 不会再主动往你手机发消息');
+    };
+    frow.onclick = async () => {
+      if (st.feishu) { st = (await fw.feishuSet('', '').catch(() => null)) || st; mark(); toast('飞书已断开'); return; }
+      form.hidden = !form.hidden; if (!form.hidden) url.focus();
+    };
+    save.onclick = async () => {
+      msg.textContent = '发送中…'; save.disabled = true;
+      const r = await fw.feishuSet(url.value, secret.value).catch((e) => ({ ok: false, error: String(e && e.message || e) }));
+      save.disabled = false;
+      if (!r || !r.ok) { msg.textContent = (r && r.error) || '没连上'; return; }
+      st = r; url.value = ''; secret.value = ''; msg.textContent = ''; form.hidden = true; mark();
+      toast('飞书已连上，群里应该收到了一条消息');
     };
   },
   // 窗口互通开关（只有桌面版有：各窗口的事件都汇在主进程）
@@ -4552,6 +4578,12 @@ const term = {
     }
   },
   // 主进程把别的窗口的新情况转给了这个窗口：说一声，让人知道 agent 的上下文里多了什么
+  // 某个窗口的 agent 用 fanbox-notify 叫你：你在电脑前就在这里说，不在就已经发去手机了
+  onAgentNotify({ id, text, to }) {
+    const s = this.sessions.find((x) => x.id === id);
+    const who = s ? (s.title || 'shell') : id;
+    toast(to === 'phone' ? `「${who}」给你手机发了一条：${text.slice(0, 60)}` : `「${who}」叫你：${text.slice(0, 120)}`);
+  },
   onAgentRelay({ id, said, edits, from }) {
     const s = this.sessions.find((x) => x.id === id);
     if (!s) return;
@@ -6452,6 +6484,7 @@ if (window.fanboxAgentCtl) {
   if (window.fanboxAgentCtl.onEvent) window.fanboxAgentCtl.onEvent((m) => term.onAgentEvent(m));
   if (window.fanboxAgentCtl.onResume) window.fanboxAgentCtl.onResume((m) => term.onAgentResume(m));
   if (window.fanboxAgentCtl.onRelay) window.fanboxAgentCtl.onRelay((m) => term.onAgentRelay(m));
+  if (window.fanboxAgentCtl.onNotify) window.fanboxAgentCtl.onNotify((m) => term.onAgentNotify(m));
 }
 
 init();

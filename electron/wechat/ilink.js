@@ -209,5 +209,5 @@ function readJson(file, fallback) { try { return JSON.parse(fs.readFileSync(file
 function writeJson(file, obj) { try { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, JSON.stringify(obj, null, 2)); } catch { /* */ } }
 
 module.exports = {
-  LOGIN_BASE, fetchQrcode, pollQrStatus, getUpdates, sendText, sendTyping, sendMedia, downloadMedia, contentFromMsg, readJson, writeJson, ping,
+  LOGIN_BASE, fetchQrcode, pollQrStatus, getUpdates, sendText, sendTyping, sendMedia, downloadMedia, contentFromMsg, readJson, writeJson, ping, httpJson,
 };

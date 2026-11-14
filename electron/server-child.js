@@ -28,6 +28,7 @@ global.__fanboxAgent = {
   list: call('list'), read: call('read'), send: call('send'),
   create: call('create'), wait: call('wait'), kill: call('kill'),
   relay: call('relay'), // 窗口互通（/api/agent/relay）
+  notify: call('notify'), // 叫人（/api/agent/notify）
   event: call('event'), // agent 官方 hook 事件（/api/agent/event）→ 主进程事实表
 };
 require('../server.js');

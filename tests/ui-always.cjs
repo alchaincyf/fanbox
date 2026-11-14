@@ -23,40 +23,78 @@ class BW extends electron.BrowserWindow {
 const proxy = new Proxy(electron, { get: (t, k) => (k === 'BrowserWindow' ? BW : t[k]) });
 const load = Module._load; Module._load = function (r, ...a) { return r === 'electron' ? proxy : load.call(this, r, ...a); };
 electron.app.focus = () => {};
+electron.dialog.showErrorBox = (t, m) => { console.error('[main error]', t, m); process.exit(1); }; // 主进程报错不许弹到用户屏幕上
+process.on('uncaughtException', (e) => { console.error('[main error]', e); process.exit(1); });
 electron.app.whenReady().then(() => { try { electron.app.dock.hide(); } catch {} });
 require(${JSON.stringify(path.join(ROOT, 'electron', 'main.js'))});`);
 
 const api = (p, body, term) => fetch(`http://127.0.0.1:${PORT}/api/agent/${p}`, { method: 'POST', headers: { 'x-fanbox-token': TOKEN, 'content-type': 'application/json', ...(term ? { 'x-fanbox-term': term } : {}) }, body: JSON.stringify(body || {}) }).then((r) => r.json());
 
+setTimeout(() => { console.error('超过 90 秒没跑完'); process.exit(1); }, 90000).unref();
 (async () => {
+  // 假飞书：收下每条消息，回成功
+  const got = [];
+  const srv = require('http').createServer((req, res) => { let d = ''; req.on('data', (c) => (d += c)); req.on('end', () => { got.push(JSON.parse(d)); res.end('{"code":0,"msg":"success"}'); }); });
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  const FAKE = `http://127.0.0.1:${srv.address().port}/`, HOOK = FAKE + 'open-apis/bot/v2/hook/test';
+  const idleFile = path.join(tmp, 'idle'); fs.writeFileSync(idleFile, '0');
   const app = await _electron.launch({
     executablePath: require(path.join(ROOT, 'node_modules', 'electron')),
     args: [path.join(tmp, 'shell'), '--user-data-dir=' + path.join(tmp, 'ud')], cwd: ROOT,
-    env: { ...process.env, HOME: home, ZDOTDIR: home, FANBOX_PORT: String(PORT), FANBOX_AGENT_TOKEN: TOKEN, FANBOX_NO_RECORD: '1' },
+    env: { ...process.env, HOME: home, ZDOTDIR: home, FANBOX_PORT: String(PORT), FANBOX_AGENT_TOKEN: TOKEN, FANBOX_NO_RECORD: '1', FANBOX_FAKE_FEISHU: FAKE, FANBOX_FAKE_IDLE: idleFile, NO_PROXY: '127.0.0.1', no_proxy: '127.0.0.1' },
   });
   const win = await app.firstWindow();
   const errors = []; win.on('pageerror', (e) => errors.push(e.message));
   await win.waitForFunction(() => typeof term !== 'undefined' && document.readyState === 'complete', null, { timeout: 30000 });
   await sleep(1500);
-  // 设置里有「微信值守」一行：默认开；没连微信时标「未连微信」
+  // 设置里有「离开时叫我」一行：默认开；没连通道时标出来
   await win.evaluate(() => document.querySelectorAll('.guide-overlay').forEach((el) => el.remove())); // 首次启动的引导层会挡住点击
   await win.click('#agent-config');
   const row = win.locator('.ap-row[data-always]');
   await row.waitFor({ state: 'visible', timeout: 5000 });
   assert.equal(await row.locator('input').isChecked(), true, '默认开');
-  assert.equal(await row.locator('[data-always-flag]').textContent(), '未连微信');
-  assert.deepEqual(await win.evaluate(() => window.fanboxWin.alwaysOnState()), { ok: true, alwaysOn: true, connected: false });
+  assert.equal(await row.locator('[data-always-flag]').textContent(), '未连微信或飞书');
+  assert.deepEqual(await win.evaluate(() => window.fanboxWin.reachState()), { ok: true, alwaysOn: true, wechat: false, feishu: false });
+
+  // 终端里有 fanbox-notify；没通道时不发，并告诉调用方别重试
+  const call = (text, t) => fetch(`http://127.0.0.1:${PORT}/api/agent/notify`, { method: 'POST', headers: { 'x-fanbox-token': TOKEN, 'x-fanbox-term': t, 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ text }) }).then((r) => r.json());
+  const T = await win.evaluate(() => term.sessions[0].id);
+  assert.ok(fs.statSync(path.join(home, '.fanbox', 'bin', 'fanbox-notify')).mode & 0o100, 'fanbox-notify 可执行');
+  let r = await call('测试跑完了', T);
+  assert.equal(r.ok, false); assert.equal(r.why, 'no_channel');
+
+  // 连飞书：地址不对不存；对的先真发一条再存（这里把飞书换成本机假服务）
+  assert.equal((await win.evaluate(() => window.fanboxWin.feishuSet('https://example.com/hook', ''))).ok, false);
+  await win.locator('.ap-row[data-feishu]').click();
+  await win.locator('[data-feishu-url]').fill(HOOK);
   if (process.argv[2]) await win.screenshot({ path: process.argv[2] });
-  // 关掉：状态变、落盘、标「已关」；重开恢复
-  await row.locator('input').click(); await sleep(400);
-  assert.equal(await row.locator('[data-always-flag]').textContent(), '已关');
-  assert.equal((await win.evaluate(() => window.fanboxWin.alwaysOnState())).alwaysOn, false);
-  const stFile = path.join(tmp, 'ud', 'wechat', 'state.json');
-  assert.equal(JSON.parse(fs.readFileSync(stFile, 'utf8')).alwaysOn, false, '关掉要落盘');
-  await row.locator('input').click(); await sleep(400);
-  assert.equal((await win.evaluate(() => window.fanboxWin.alwaysOnState())).alwaysOn, true);
+  await win.locator('[data-feishu-save]').click();
+  await win.waitForFunction(() => document.querySelector('[data-feishu-flag]').textContent.startsWith('已连'), null, { timeout: 8000 });
+  assert.equal(await row.locator('[data-always-flag]').textContent(), '飞书');
+  assert.equal(got.length, 1); assert.ok(got[0].content.text.includes('FanBox 已连上'));
+  assert.equal(fs.statSync(path.join(tmp, 'ud', 'wechat', 'feishu.json')).mode & 0o777, 0o600, '地址是凭据，只许自己读');
+
+  // 人在电脑前（空闲 0 秒）：只在界面提示，不发手机
+  r = await call('我在电脑前不该收到', T);
+  assert.equal(r.delivered, 'desktop'); assert.equal(got.length, 1);
+  // 一分钟内同一个窗口再发：挡掉
+  r = await call('又一条', T);
+  assert.equal(r.delivered, 'skip');
+  // 人离开了（空闲 10 分钟）、换一个窗口发：进发件箱，飞书群里收到，开头带着是哪个窗口
+  fs.writeFileSync(idleFile, '600');
+  const T2 = await win.evaluate(() => term.create({ background: true }).then((s) => s.id)).catch(() => null) || 'tX';
+  r = await call('构建失败了，回来看一眼', T2);
+  assert.equal(r.delivered, 'phone', JSON.stringify(r));
+  for (let i = 0; i < 40 && got.length < 2; i++) await sleep(250);
+  assert.equal(got.length, 2, '离开时发到飞书');
+  assert.ok(/^「.+」构建失败了，回来看一眼$/.test(got[1].content.text), got[1].content.text);
+  // 关掉「离开时叫我」：不发
+  await row.locator('input').click(); await sleep(300);
+  r = await call('关着的时候', 'tY');
+  assert.equal(r.ok, false); assert.equal(r.why, 'off');
   assert.deepEqual(errors, []);
-  console.log('always-on checks passed: settings row, default on, not-connected flag, off/on persisted');
+  console.log('always-on checks passed: settings row, default on, fanbox-notify installed, no channel rejected, feishu connect (bad url refused, test message, 0600), at-desk stays on desktop, per-window gap, away goes to feishu with window label, off respected');
   await app.evaluate(({ app }) => app.exit(0));
   fs.rmSync(tmp, { recursive: true, force: true });
+  process.exit(0); // 假飞书服务上还挂着保活连接，等它自己关会拖很久
 })().catch((e) => { console.error(e); process.exit(1); });
