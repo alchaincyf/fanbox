@@ -2886,7 +2886,7 @@ const wechatView = {
 };
 
 // ---------- coding agent 启动按钮（#38：内置注册表 + 设置面板开关 + config 自定义） ----------
-// 三层：① AGENT_REGISTRY 内置 11 个主流 agent（图标在 /assets/agents/）
+// 三层：① AGENT_REGISTRY 内置 9 个主流 agent（只收有终端 CLI 形态的）（图标在 /assets/agents/）
 //      ② 设置面板（⚙ 滑杆按钮）勾选启用哪些，存 config.json 的 enabledAgents，默认 claude + codex
 //      ③ config.json 的 agents 数组做高级自定义：同 id 覆盖内置命令，新 id 追加按钮
 // app: true 的是桌面应用（无终端 CLI 形态，官方确认），按钮改为 open -a 拉起，检测走 open -Ra
@@ -2903,11 +2903,9 @@ const AGENT_REGISTRY = [
   { id: 'hermes', label: 'Hermes Agent', cmd: 'hermes', bin: 'hermes', install: 'curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash' },
   { id: 'openclaw', label: 'OpenClaw', cmd: 'openclaw', bin: 'openclaw', install: 'npm install -g openclaw' },
   { id: 'kimi', label: 'Kimi Code', cmd: 'kimi', bin: 'kimi', install: 'curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash', sessions: { badge: 'K', resumeCmd: 'kimi -S {id}' } },
-  { id: 'zcode', label: 'ZCode', cmd: 'open -a ZCode', app: 'ZCode', install: 'https://zcode.z.ai （桌面应用，官网下载 dmg）' },
   { id: 'opencode', label: 'opencode', cmd: 'opencode', bin: 'opencode', install: 'curl -fsSL https://opencode.ai/install | bash', sessions: { badge: 'oc', resumeCmd: 'opencode -s {id}' } },
   { id: 'pi', label: 'pi', cmd: 'pi', bin: 'pi', install: 'curl -fsSL https://pi.dev/install.sh | sh' },
   { id: 'codebuddy', label: 'CodeBuddy', cmd: 'codebuddy', bin: 'codebuddy', install: 'npm install -g @tencent-ai/codebuddy-code' },
-  { id: 'workbuddy', label: 'WorkBuddy', cmd: 'open -a WorkBuddy', app: 'WorkBuddy', install: 'https://codebuddy.cn/work （桌面应用，官网下载）' },
   { id: 'qoder', label: 'Qoder CLI', cmd: 'qodercli', bin: 'qodercli', install: 'curl -fsSL https://qoder.com/install | bash' },
 ];
 const AGENT_DEFAULTS = ['claude', 'codex'];
@@ -3080,6 +3078,7 @@ const agentsPop = {
     cb.onchange = async () => {
       await fw.alwaysOnSet(cb.checked).catch(() => {});
       mark();
+      reachBar.refresh();
       toast(cb.checked ? '离开时叫我：已开' : '离开时叫我：已关，agent 不会再主动往你手机发消息');
     };
     frow.onclick = async () => {
@@ -3436,6 +3435,49 @@ const powerBar = {
     return `<b>合盖继续干活</b>
       <p>翻箱盯着每个终端窗口的工作状态。开启后：只要检测到有 agent 正在干活，合上盖子 Mac 也不休眠，任务接着跑；所有终端都空闲约两分钟后，自动恢复正常休眠——不会让 Mac 一直不睡。</p>
       <p class="tip-note">合盖跑任务持续耗电发热，建议接电源。首次开启需输一次管理员密码（装一条仅限电源设置的免密规则）。</p>
+      <p class="tip-state">${escapeHtml(now)}</p>`;
+  },
+};
+
+// ---------- 侧栏「离开时叫我」开关（桌面版专属）----------
+// 和设置面板里的同名开关是同一个状态（reach:state / wechat:alwaysOn），放侧栏是为了出门前一眼看得到。
+// 连微信、连飞书仍在原处：微信 ClawBot 面板、设置面板的飞书一行。
+const reachBar = {
+  st: null,
+  async init() {
+    const fw = window.fanboxWin;
+    if (!fw || !fw.reachState) return; // 浏览器版 / 老 preload：整行不显示
+    await this.refresh();
+    if (!this.st) return;
+    $('#pw-reach').classList.remove('hidden');
+    $('#pw-reach').onclick = () => this.flip();
+    sideHoverCard($('#pw-reach'), () => this.tip());
+    $('#pw-reach').addEventListener('mouseenter', () => this.refresh()); // 通道可能刚在别处连上或断开
+  },
+  async refresh() {
+    const st = await window.fanboxWin.reachState().catch(() => null);
+    if (st) { this.st = st; this.sync(); }
+  },
+  async flip() {
+    const on = !(this.st && this.st.alwaysOn);
+    await window.fanboxWin.alwaysOnSet(on).catch(() => {});
+    await this.refresh();
+    const st = this.st || {};
+    toast(!st.alwaysOn ? '离开时叫我：已关，agent 不会再主动往你手机发消息'
+      : (st.wechat || st.feishu) ? '离开时叫我：已开' : '离开时叫我：已开，但还没连微信或飞书，消息发不出去');
+  },
+  sync() {
+    const st = this.st; const el = $('#pw-reach'); if (!st || !el) return;
+    el.querySelector('.pw-switch').classList.toggle('on', !!st.alwaysOn);
+    el.querySelector('.pw-dot').classList.toggle('lit', !!st.alwaysOn && !!(st.wechat || st.feishu)); // 点亮 = 开着且真有通道能发到手机
+  },
+  tip() {
+    const st = this.st || {};
+    const ch = st.wechat ? (st.feishu ? '微信＋飞书' : '微信') : st.feishu ? '飞书' : '';
+    const now = !st.alwaysOn ? '现在：已关' : ch ? `现在：已开，发到${ch}` : '现在：已开，但还没连微信或飞书，消息发不出去';
+    return `<b>离开时叫我</b>
+      <p>终端里的 agent 需要你、而你不在电脑前时，发消息到你手机：某个窗口停下来等你满 10 分钟、断线续不上，或者 agent 自己叫你（fanbox-notify）。你在电脑前就只在界面上提示。</p>
+      <p class="tip-note">连微信：更多… › 微信 ClawBot。连飞书：终端右上的设置 › 提醒 › 飞书。</p>
       <p class="tip-state">${escapeHtml(now)}</p>`;
   },
 };
@@ -6376,6 +6418,7 @@ async function init() {
   if (!state.cwd) await navigate(state.home, false);
   renderRootsActive(); // 列表可能比侧栏先到，这时侧栏还没东西可高亮，补一次
   powerBar.init();
+  reachBar.init();
   verInfo.init();
   cronPanel.syncBadge();
   loadAgentProjects();

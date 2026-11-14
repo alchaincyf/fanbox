@@ -379,7 +379,7 @@ const bridge = {
           this.expired = false;
           ilink.writeJson(f('account.json'), this.account);
           this.emit('wechat:connected', { ok: true, account: this.account.accountId });
-          this.startPolling();
+          this.restartPolling(); // 旧登录失效时轮询已退出，换了新 token 必须重开一条
           this.fireConnChange();
           return { ok: true };
         }
@@ -391,6 +391,10 @@ const bridge = {
       }
       return { ok: false, error: '登录超时' };
     } catch (e) { if (onErr) onErr(e); return { ok: false, error: String(e && e.message || e) }; }
+  },
+  restartPolling() {
+    if (this.pollAbort) { try { this.pollAbort.abort(); } catch { /* */ } this.pollAbort = null; }
+    this.startPolling();
   },
   startPolling() {
     if (this.pollAbort) return; // 已在跑
@@ -417,6 +421,7 @@ const bridge = {
           fails++; await sleep(fails >= 3 ? 30000 : 2000);
         }
       }
+      if (this.pollAbort === ac) this.pollAbort = null; // 循环退出（如 token 失效）后放开，否则重新扫码也不会再收消息
     })();
   },
   // 入队 + 唤醒 worker：轮询线只调这个，O(1) 返回。按会话（from_user_id）分队，

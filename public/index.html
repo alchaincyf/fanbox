@@ -73,6 +73,13 @@
           <span class="pw-dot"></span>
           <label class="pw-switch"><i></i></label>
         </div>
+        <!-- 离开时叫我：和设置面板「提醒」里的同名开关是同一个状态，放这里是为了出门前看得到。桌面版才显示，app.js 按 fanboxWin.reachState 判定 -->
+        <div id="pw-reach" class="pw-row hidden">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+          <span class="pw-label">离开时叫我</span>
+          <span class="pw-dot"></span>
+          <label class="pw-switch"><i></i></label>
+        </div>
       </nav>
       <div class="theme-switch" id="theme-switch">
         <div class="theme-switch-label">皮肤</div>

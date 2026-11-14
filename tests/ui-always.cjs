@@ -56,6 +56,12 @@ setTimeout(() => { console.error('超过 90 秒没跑完'); process.exit(1); }, 
   assert.equal(await row.locator('[data-always-flag]').textContent(), '未连微信或飞书');
   assert.deepEqual(await win.evaluate(() => window.fanboxWin.reachState()), { ok: true, alwaysOn: true, wechat: false, feishu: false });
 
+  // 侧栏也有一个「离开时叫我」：和设置里是同一个状态。没连通道时开关亮着但圆点不亮
+  const side = win.locator('#pw-reach');
+  assert.equal(await side.isVisible(), true, '侧栏有这一行');
+  assert.equal(await side.locator('.pw-switch.on').count(), 1, '默认开');
+  assert.equal(await side.locator('.pw-dot.lit').count(), 0, '没连通道，圆点不亮');
+
   // 终端里有 fanbox-notify；没通道时不发，并告诉调用方别重试
   const call = (text, t) => fetch(`http://127.0.0.1:${PORT}/api/agent/notify`, { method: 'POST', headers: { 'x-fanbox-token': TOKEN, 'x-fanbox-term': t, 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ text }) }).then((r) => r.json());
   const T = await win.evaluate(() => term.sessions[0].id);
@@ -74,6 +80,17 @@ setTimeout(() => { console.error('超过 90 秒没跑完'); process.exit(1); }, 
   assert.equal(got.length, 1); assert.ok(got[0].content.text.includes('FanBox 已连上'));
   assert.equal(fs.statSync(path.join(tmp, 'ud', 'wechat', 'feishu.json')).mode & 0o777, 0o600, '地址是凭据，只许自己读');
 
+  // 连上飞书后，侧栏圆点亮；在侧栏关掉，设置里再打开时也是关的，再从侧栏开回来
+  await win.evaluate(() => reachBar.refresh());
+  assert.equal(await side.locator('.pw-dot.lit').count(), 1, '连了飞书，圆点亮');
+  if (process.argv[3]) await win.screenshot({ path: process.argv[3] });
+  await win.evaluate(() => reachBar.flip());
+  assert.equal((await win.evaluate(() => window.fanboxWin.reachState())).alwaysOn, false, '侧栏能关');
+  assert.equal(await side.locator('.pw-switch.on').count(), 0);
+  assert.equal(await side.locator('.pw-dot.lit').count(), 0, '关着，圆点不亮');
+  await win.evaluate(() => reachBar.flip());
+  assert.equal((await win.evaluate(() => window.fanboxWin.reachState())).alwaysOn, true, '侧栏能开');
+
   // 人在电脑前（空闲 0 秒）：只在界面提示，不发手机
   r = await call('我在电脑前不该收到', T);
   assert.equal(r.delivered, 'desktop'); assert.equal(got.length, 1);
@@ -90,6 +107,7 @@ setTimeout(() => { console.error('超过 90 秒没跑完'); process.exit(1); }, 
   assert.ok(/^「.+」构建失败了，回来看一眼$/.test(got[1].content.text), got[1].content.text);
   // 关掉「离开时叫我」：不发
   await row.locator('input').click(); await sleep(300);
+  assert.equal(await side.locator('.pw-switch.on').count(), 0, '设置里关了，侧栏跟着关');
   r = await call('关着的时候', 'tY');
   assert.equal(r.ok, false); assert.equal(r.why, 'off');
   assert.deepEqual(errors, []);
