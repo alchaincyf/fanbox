@@ -8,6 +8,7 @@ const fs = require('fs');
 const ilink = require('./ilink');
 const driver = require('./driver');
 const memory = require('./memory');
+const ao = require('../../lib/always-on'); // 常驻值守：事件收件箱 / 定时器 / 发件箱三张表和规则
 
 let DATA_DIR = null;
 function dataDir() {
@@ -94,6 +95,11 @@ const bridge = {
   expired: false,                  // 已连过但 token 失效（轮询/探活发现）→ 当作未连，需重新扫码
   onConnChange: null,              // 连接态变化回调（主进程用来联动「离开不待机」电源守卫）
   termControl: null,               // 跨终端感知/控制（主进程注入 { list(), send(id,text) }）
+  alwaysOn: true,                  // 常驻值守开关（默认开，面板里可关）：关掉后只被动应答
+  aoState: ao.empty(),             // 收件箱 / 定时器 / 发件箱（always.json，重启不丢）
+  aoTimer: null,
+  aoRunPolicy: ao.RUN_POLICY,      // 没人触发的运行的限额：两次至少隔 3 分钟、一天最多 48 次、事件放 6 小时作废
+  aoPolicy: ao.DEFAULT_POLICY,     // 发件箱节奏：夜里 23–8 点不发、两条至少隔 10 分钟、一天最多 20 条
   _termRoster: [],                 // 上一轮注入的终端花名册，用来把 <term n=编号> 映回内部 id
 
   // 连接是否真活着：有账号、有 token、且没被标记失效
@@ -107,11 +113,16 @@ const bridge = {
     this.cwd = st.cwd || os.homedir();
     if (typeof st.persona === 'string' && st.persona.trim()) this.persona = st.persona;
     this.conversations = ilink.readJson(f('conversations.json'), {}) || {};
+    this.alwaysOn = st.alwaysOn !== false;
+    this.aoState = ao.recover(ao.load(f('always.json')), Date.now());
+    if (!this.aoTimer) { this.aoTimer = setInterval(() => this.aoTick().catch(() => {}), 30000); if (this.aoTimer.unref) this.aoTimer.unref(); }
     this.account = ilink.readJson(f('account.json'), null);
     driver.warmEnv(); // 启动时预热「终端环境复刻」(抓 PATH/代理)，免得第一条微信消息卡几百毫秒
     if (this.account && this.account.token) { this.startPolling(); this.fireConnChange(); } // 已登录则自动恢复收消息
+    this.aoReplay();
   },
-  persistState() { ilink.writeJson(f('state.json'), { target: this.target, cwd: this.cwd, persona: this.persona }); },
+  persistState() { ilink.writeJson(f('state.json'), { target: this.target, cwd: this.cwd, persona: this.persona, alwaysOn: this.alwaysOn }); },
+  setAlwaysOn(on) { this.alwaysOn = !!on; this.persistState(); return { ok: true, alwaysOn: this.alwaysOn }; },
   setPersona(p) { this.persona = (typeof p === 'string' && p.trim()) ? p : WX_PERSONA_DEFAULT; this.persistState(); return { ok: true, persona: this.persona }; },
   persistConvos() { ilink.writeJson(f('conversations.json'), this.conversations); },
   emit(ch, m) { if (this.win && !this.win.isDestroyed()) this.win.webContents.send(ch, m); },
@@ -124,6 +135,7 @@ const bridge = {
     const c = this.conv(cid);
     const m = { role, text, time: now() };
     if (extra && extra.images && extra.images.length) m.images = extra.images; // 入站图片绝对路径，UI 直接渲染
+    if (extra && extra.proactive) m.proactive = true; // 没人问、它主动发的
     c.messages.push(m);
     c.updatedAt = Date.now();        // 最近活跃时间：决定打开面板默认显示哪个会话（落盘随 persistConvos）
     if (c.messages.length > 400) c.messages = c.messages.slice(-400);
@@ -171,6 +183,8 @@ const bridge = {
       cwdName: path.basename(this.cwd || '') || '/',
       persona: this.persona,
       personaDefault: WX_PERSONA_DEFAULT,
+      alwaysOn: this.alwaysOn,
+      always: { watches: (this.aoState.watches || []).filter((w) => w.status === 'active').length, timers: this.aoState.timers.filter((t) => t.status === 'active').length, pendingOut: this.aoState.outbox.filter((m) => m.status === 'pending').length },
     };
   },
   setTarget(t) { if (t === 'codex' || t === 'claude') { this.target = t; this.persistState(); } return { ok: true, target: this.target }; },
@@ -215,17 +229,18 @@ const bridge = {
 
   // 跑一轮大脑：按 target 选 driver，带上该会话的工作目录与（claude 的）续话 session
   // onProgress：可选，driver 流式跑时把「正在干啥」回调出来，用于微信实时播报
-  async runAgent(cid, text, onProgress) {
+  // opts.auto：没人触发的运行（常驻唤醒）——只读权限，不执行它发出的终端操作
+  async runAgent(cid, text, onProgress, opts = {}) {
     const c = this.conv(cid);
     // 压缩后留的「上次进度摘要」：换了新 session，把它播种进去让 agent 无缝接着干，用一次就清
     let recap = '';
     if (c.pendingRecap) { recap = `【上下文已压缩归档，下面是进度摘要 + 最近几轮原话，接着干、别从头开始】\n${c.pendingRecap}`; c.pendingRecap = ''; }
     // 系统提示 = 人格 + 注入记忆 + 记忆协议 + 发文件协议 + 控制终端协议 + 别的终端实时状态 + 续场摘要
     const termCtx = await this.buildTermContext();
-    const sys = [this.persona, memory.inject(), memory.PROTOCOL, WX_FILE_PROTOCOL, WX_TERM_PROTOCOL, termCtx, recap].filter(Boolean).join('\n\n');
+    const sys = [this.persona, memory.inject(), memory.PROTOCOL, WX_FILE_PROTOCOL, WX_TERM_PROTOCOL, this.alwaysOn ? ao.TIMER_PROTOCOL : '', this.alwaysOn ? ao.timersNote(this.aoState, Date.now()) : '', termCtx, recap].filter(Boolean).join('\n\n');
     let raw, r;
     if (this.target === 'claude') {
-      r = await driver.runClaude(text, this.cwd, c.claudeSession, sys, onProgress);
+      r = await driver.runClaude(text, this.cwd, c.claudeSession, sys, onProgress, { readOnly: !!opts.auto });
       if (r.sessionId) { c.claudeSession = r.sessionId; }
       raw = r.text;
     } else {
@@ -237,13 +252,44 @@ const bridge = {
     let tk = r.tokens || 0;
     if (!tk) { const chars = (c.messages || []).reduce((s, m) => s + (m.text ? m.text.length : 0), 0); tk = Math.round(chars / 3); }
     c.lastTokens = tk;
+    c.lastRunError = !!r.isError;
     c.ctxPeak = Math.max(c.ctxPeak || 0, tk); // 进度条用的「上下文水位」：取峰值单调爬升，避免单轮 usage 抖动让条来回跳
     if (r.cost) c.totalCost = (c.totalCost || 0) + r.cost;
     this.logRun(cid, r); // 一行流水：耗时/重试次数/是否超时，排查链路问题时直接 cat
     this.persistConvos();
     // 抽出 <memory> ops 确定性落盘（去污染），把记忆块从展示里剥掉
-    const { clean, ops } = memory.extractOps(raw);
-    if (ops.length) { try { memory.applyOps(ops); } catch (e) { console.error('[wechat] memory apply', e); } }
+    // 没人触发的一轮（auto）不许写长期记忆：它读的是终端输出、issue 标题这些别人写的东西，写进记忆就会带进以后每一轮全权限的运行
+    const mem = memory.extractOps(raw);
+    if (mem.ops.length && !opts.auto) { try { memory.applyOps(mem.ops); } catch (e) { console.error('[wechat] memory apply', e); } }
+    // 抽出 <timer> 指令落进定时器表（跟进 / 定期任务 / 取消），标记不显示给用户
+    const tm = ao.extractTimers(mem.clean || raw);
+    const receipts = []; // 定成了什么、没定成什么，原样告诉用户：不然它嘴上说「好，明早叫你」而表里其实没有
+    if (this.alwaysOn && !opts.internal && (tm.sets.length || tm.cancels.length)) {
+      const nowMs = Date.now();
+      if (!opts.auto) for (const id of tm.cancels) ao.timerCancel(this.aoState, id, nowMs);
+      for (const t of (opts.auto ? tm.sets.slice(0, 1) : tm.sets)) {
+        const it = ao.timerSet(this.aoState, t, nowMs, { auto: !!opts.auto });
+        receipts.push(it ? `⏰ 已定${it.kind === 'schedule' ? '（重复）' : ''}：${it.note.slice(0, 60)}` : `⚠️ 这个定时没定成（时间不对或太密）：${String(t.note || '').slice(0, 40)}`);
+      }
+      this.aoSave();
+    }
+    // 抽出 <watch> 指令：盯梢只在用户触发的运行里建（没人触发的一轮不能给自己加定期跑的命令）
+    const wt = ao.extractWatches(tm.clean);
+    if (this.alwaysOn && !opts.auto && !opts.internal && (wt.sets.length || wt.cancels.length)) {
+      const nowMs = Date.now();
+      for (const id of wt.cancels) receipts.push(ao.watchCancel(this.aoState, id, nowMs) ? `👀 已停止盯：${id}` : `⚠️ 没找到要停的盯梢：${id}`);
+      for (const w of wt.sets) {
+        const it = ao.watchSet(this.aoState, w, nowMs);
+        // 盯梢是定期在你电脑上跑的命令：建的时候把命令原样亮给你看
+        receipts.push(it ? `👀 开始盯「${it.name}」，每 ${Math.round(it.everyMs / 60000)} 分钟跑一次：\n${it.cmd.slice(0, 300)}\n（回「别盯${it.name}了」可停）` : `⚠️ 这条盯梢没建成（缺名字或命令，或已经满 20 条）`);
+      }
+      this.aoSave();
+    }
+    const hadTags = mem.ops.length || tm.sets.length || tm.cancels.length || wt.sets.length || wt.cancels.length;
+    const clean = wt.clean; // 标记都已剥掉；剥完是空的就是空的，不回落到带标记的原文
+    if (opts.auto) return this.extractTermOps(clean).clean; // 只读的一轮：终端操作一律不执行
+    if (!clean && hadTags) return [ '好的。', ...receipts ].join('\n');
+    if (receipts.length) return this.runTermOps(clean) + '\n\n' + receipts.join('\n');
     // 抽出 <term> ops 写进别的终端（fire-and-forget），把标记从展示里剥掉、附一句回执
     return this.runTermOps(clean || raw);
   },
@@ -251,7 +297,7 @@ const bridge = {
   // 压缩归档前的静默一轮：在「当前满 session」上让 agent flush 记忆 + 吐一段进度摘要。
   // 走 runAgent 复用 <memory> ops 落盘；返回的正文就是进度摘要（已剥掉记忆块）。失败返回空串，绝不阻塞重置。
   async memoryFlush(cid) {
-    try { return (await this.runAgent(cid, WX_COMPACT_PROMPT) || '').trim(); }
+    try { return (await this.runAgent(cid, WX_COMPACT_PROMPT, null, { internal: true }) || '').trim(); } // 没人在场的内部一轮：不许定时、不许建盯梢
     catch (e) { console.error('[wechat] memoryFlush', e); return ''; }
   },
   // 尾部回放：从展示用的 messages 里取最近几轮用户+助手原话，重置后连同摘要一起播种进新 session，
@@ -370,17 +416,130 @@ const bridge = {
     if (!msg || msg.message_type !== 1) return;   // 只处理用户发来的
     const from = msg.from_user_id;
     if (!from) return;
-    (this.msgQueue[from] = this.msgQueue[from] || []).push(msg);
+    // 先落进收件箱再处理：FanBox 在回话途中崩了，重启后这条还在（见 aoReplay）。同一条消息重复送达只处理一次
+    const key = 'wx:' + (msg.message_id || msg.msg_id || msg.client_id || require('crypto').createHash('sha1').update(JSON.stringify(msg)).digest('hex').slice(0, 16));
+    if (!ao.inboxAdd(this.aoState, { kind: 'user_msg', key, payload: { msg } }, Date.now())) return;
+    const ev = this.aoState.inbox[this.aoState.inbox.length - 1];
+    ev.status = 'running'; ev.attempts = 1;
+    if (msg.context_token) (this.aoState.ctx = this.aoState.ctx || {})[from] = msg.context_token; // 主动发消息时要用
+    ao.outboxRetryNow(this.aoState); // 拿到新凭据：之前没发出去的可以马上再试
+    this.aoSave();
+    (this.msgQueue[from] = this.msgQueue[from] || []).push({ ...msg, __inboxId: ev.id });
     this.drainQueue(from);
   },
+  // ---------- 常驻值守（lib/always-on.js 的接线）----------
+  aoSave() { ao.save(f('always.json'), this.aoState); },
+  aoLog(o) { try { fs.appendFileSync(f('always.log'), JSON.stringify({ t: new Date().toISOString(), ...o }) + '\n'); } catch { /* */ } },
+  // 手机那头的会话：主动消息发给它。取最近活跃的微信会话
+  ownerCid() {
+    const ids = Object.keys(this.conversations).filter((k) => /@im\.wechat$/.test(k));
+    return ids.sort((a, b) => (this.conversations[b].updatedAt || 0) - (this.conversations[a].updatedAt || 0))[0] || '';
+  },
+  // 事件入口：主进程把「窗口等你太久」「断线续不上」这类事送进来。只入箱、立刻返回
+  event(kind, key, payload) {
+    if (!this.alwaysOn || !this.isConnected() || !this.ownerCid() || this.target !== 'claude') return false; // 只读运行目前只对 Claude Code 验证过，大脑是 Codex 时不值守
+    const added = ao.inboxAdd(this.aoState, { kind, key, payload }, Date.now());
+    if (added) { this.aoSave(); this.aoKick(); }
+    return added;
+  },
+  // 有待处理的非用户事件 → 往手机会话的队列里放一个唤醒标记。和用户消息共用同一个串行 worker：
+  // 同一时间只有一轮在跑，攒下的事件合并成一轮
+  aoKick() {
+    const cid = this.ownerCid();
+    if (!cid || !this.alwaysOn || this.target !== 'claude') return;
+    const gate = ao.autoGate(this.aoState, Date.now(), this.aoRunPolicy); // 太近、今天跑满了都先不跑，事件留着；放了 6 小时的作废
+    if (!ao.inboxPending(this.aoState, (e) => e.kind !== 'user_msg').length) return;
+    if (gate) { if (this._aoGate !== gate) { this._aoGate = gate; this.aoLog({ run: 'held', why: gate }); } return; }
+    this._aoGate = '';
+    const q = (this.msgQueue[cid] = this.msgQueue[cid] || []);
+    if (!q.some((m) => m && m.__auto)) q.push({ __auto: true });
+    this.drainQueue(cid);
+  },
+  // 调度器 + 派发器，30 秒一轮：到期的定时器变成事件；有事件就唤醒；发件箱里能发的发一条
+  async aoTick() {
+    if (!this.alwaysOn) return;
+    const now = Date.now();
+    if (now - (this._aoPruneAt || 0) > 3600e3) { this._aoPruneAt = now; ao.prune(this.aoState, now); this.aoSave(); }
+    if (ao.timersFire(this.aoState, now)) this.aoSave();
+    await this.aoWatch(now);
+    if (this.isConnected()) { this.aoKick(); await this.aoDispatch(); }
+  },
+  // 盯梢：到点的命令各跑一遍（登录 shell 环境，和用户终端一致；60 秒封顶），输出交给 watchIngest 找新行
+  async aoWatch(now) {
+    if (this._aoWatching) return;
+    this._aoWatching = true;
+    try {
+      for (const w of ao.watchesDue(this.aoState, now)) {
+        let r;
+        try { r = await driver.run(w.cmd, '', this.cwd, { idleMs: 30000, maxMs: 60000 }); } catch (e) { r = { ok: false, out: '', err: String(e && e.message || e) }; }
+        const n = ao.watchIngest(this.aoState, w.id, r.ok ? r.out : (r.err || r.out), Date.now(), !!r.ok);
+        this.aoSave();
+        this.aoLog({ watch: w.name, ok: !!r.ok, fresh: n });
+      }
+    } finally { this._aoWatching = false; }
+  },
+  // 没人触发的一轮：把攒下的事件一次交给 agent（只读），它决定发不发
+  async onAuto(cid) {
+    const events = ao.inboxTake(this.aoState, (e) => e.kind !== 'user_msg');
+    if (!events.length) return;
+    ao.autoRan(this.aoState, Date.now());
+    this.aoSave();
+    const ids = events.map((e) => e.id), t0 = Date.now();
+    let reply = '', ok = true;
+    try { reply = await this.runAgent(cid, ao.autoPrompt(events, ao.recentSent(this.aoState), t0), null, { auto: true }); }
+    catch (e) { ok = false; reply = ''; this.aoLog({ run: 'auto', error: String(e && e.message || e).slice(0, 200), events: events.map((e2) => e2.kind) }); }
+    if (ok && (this.conv(cid).lastRunError || ao.isBrainError(reply))) ok = false; // 大脑没跑成（超时、额度、要登录、空结果）：事件放回去下次再试，别把报错发给人
+    const silent = !ok || ao.isSilent(extractFiles(reply).clean);
+    if (ok && !silent) ao.outboxAdd(this.aoState, extractFiles(reply).clean.replace(/<silent\s*\/?>/gi, '').trim(), Date.now(), { from: events.map((e) => e.kind).join(',') });
+    ao.inboxDone(this.aoState, ids, Date.now(), ok);
+    this.aoSave();
+    this.aoLog({ run: 'auto', ok, events: events.map((e) => ({ kind: e.kind, key: e.key })), silent, ms: Date.now() - t0, say: silent ? '' : reply.slice(0, 200) });
+    await this.aoDispatch();
+  },
+  // 派发器：按节奏规则放行一条，发到手机。微信要求带上最近一次收到消息时的 context_token
+  async aoDispatch() {
+    const cid = this.ownerCid();
+    if (!cid || !this.isConnected() || this._aoSending) return; // 一次只发一条：调度器和运行收尾可能同时来叫
+    this._aoSending = true;
+    try { await this.aoDispatchOne(cid); } finally { this._aoSending = false; }
+  },
+  async aoDispatchOne(cid) {
+    const now = Date.now();
+    const { msg, hold } = ao.outboxNext(this.aoState, now, this.aoPolicy);
+    if (!msg) { if (hold && hold !== 'empty' && this._aoHold !== hold) { this._aoHold = hold; this.aoLog({ outbox: 'hold', why: hold }); } return; }
+    this._aoHold = '';
+    const ctx = (this.aoState.ctx || {})[cid] || '';
+    let sent = false, err = '';
+    try { const r = await ilink.sendText(this.account, cid, msg.text, ctx); sent = !!(r && r.ok && !(r.json && ((r.json.ret && r.json.ret !== 0) || (r.json.errcode && r.json.errcode !== 0)))); if (!sent) err = JSON.stringify(r && r.json || {}).slice(0, 160); }
+    catch (e) { err = String(e && e.message || e).slice(0, 160); }
+    ao.outboxMark(this.aoState, msg.id, Date.now(), sent);
+    this.aoSave();
+    this.aoLog({ outbox: sent ? 'sent' : 'send_failed', id: msg.id, err, text: msg.text.slice(0, 120) });
+    if (sent) this.push(cid, 'assistant', msg.text, { proactive: true });
+  },
+  // 启动时：上次崩在半路、还没回的用户消息（半小时内的）重新排队；别的待处理事件照常唤醒
+  aoReplay() {
+    const now = Date.now();
+    for (const e of ao.inboxPending(this.aoState, (x) => x.kind === 'user_msg')) {
+      if (now - e.at > 30 * 60000 || !e.payload || !e.payload.msg) { ao.inboxDone(this.aoState, [e.id], now, true); continue; }
+      if (e.attempts >= 2) { ao.inboxDone(this.aoState, [e.id], now, true); continue; } // 补过一次还是没回成：不再补，免得一条坏消息每次重启都重放
+      e.attempts++;
+      const m = e.payload.msg, from = m.from_user_id;
+      (this.msgQueue[from] = this.msgQueue[from] || []).push({ ...m, __inboxId: e.id, __replay: true });
+      this.drainQueue(from);
+    }
+    this.aoSave();
+  },
+
   async drainQueue(from) {
     if (this.draining[from]) return;              // 该会话已有 worker 在跑
     this.draining[from] = true;
     try {
       while (this.msgQueue[from] && this.msgQueue[from].length) {
         const msg = this.msgQueue[from].shift();
-        try { await this.onWechatMsg(msg); }
+        try { if (msg.__auto) await this.onAuto(from); else await this.onWechatMsg(msg); }
         catch (e) { console.error('[wechat] onWechatMsg', e); }
+        if (msg.__inboxId) { ao.inboxDone(this.aoState, [msg.__inboxId], Date.now(), true); this.aoSave(); }
       }
     } finally { this.draining[from] = false; }
   },
@@ -456,7 +615,9 @@ const bridge = {
     this.push(from, 'user', text || placeholders.join(''), imgPaths.length ? { images: imgPaths } : null);
     const live = this.startLiveness(from, msg.context_token);
     let reply;
-    try { reply = await this.runAgent(from, (text || '（无文字说明）') + mediaNote, live.onProgress); }
+    // 崩溃后补回的消息：上次可能已经做到一半，先让它核对，别把有副作用的事再做一遍
+    const replayNote = msg.__replay ? '\n\n[系统说明：这条消息是 FanBox 意外退出前收到的，当时可能已经处理到一半。先确认哪些已经做过，没做的再做，不要重复执行。]' : '';
+    try { reply = await this.runAgent(from, (text || '（无文字说明）') + mediaNote + replayNote, live.onProgress); }
     catch (e) { reply = `（出错）${String(e && e.message || e).slice(0, 300)}`; }
     finally { live.stop(); }
     const { clean, files } = extractFiles(reply);

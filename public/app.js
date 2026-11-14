@@ -3018,6 +3018,11 @@ const agentsPop = {
         <span class="ap-name">窗口互通</span>
         <span class="ap-flag" data-relay-flag></span>
       </label>
+      <label class="ap-row" data-always style="display:none" title="连着微信遥控时生效。某个窗口的 agent 停下来等你满 10 分钟而你不在电脑前、断线续不上、或它自己定的跟进到点时，微信那头的 agent 会醒来看一眼，值得才在微信上叫你；你回一句它替你转进对应窗口。没人触发的这种运行只能看、不能改文件跑命令。夜里 23 点到早上 8 点不发，两条之间至少隔 10 分钟">
+        <input type="checkbox">
+        <span class="ap-name">微信值守</span>
+        <span class="ap-flag" data-always-flag></span>
+      </label>
       <div class="ap-head ap-sub">Agent 互控</div>
       <div class="ap-row" title="装进 ~/.claude/skills 后，翻箱终端里的 claude 就能指挥兄弟窗口：新开窗口 / 读输出 / 发指令 / 等结果">
         <span class="ap-name">fanbox-agent skill</span>
@@ -3037,6 +3042,7 @@ const agentsPop = {
     this.markNotify(pop);
     this.markResume(pop);
     this.markRelay(pop);
+    this.markAlways(pop);
     pop.querySelectorAll('.ap-list .ap-row input').forEach((cb) => {
       cb.onchange = async () => {
         const ids = [...pop.querySelectorAll('.ap-list .ap-row input:checked')].map((x) => x.closest('.ap-row').dataset.id);
@@ -3047,6 +3053,21 @@ const agentsPop = {
     });
     this._out = (ev) => { if (!pop.contains(ev.target) && !$('#agent-config').contains(ev.target)) this.close(); };
     document.addEventListener('mousedown', this._out, true);
+  },
+  // 微信值守开关（只有桌面版有；没连微信时标出来，开着也不会有动作）
+  async markAlways(pop) {
+    const row = pop.querySelector('[data-always]');
+    if (!row || !window.fanboxWin || !window.fanboxWin.alwaysOnState) return;
+    const cb = row.querySelector('input'), flag = row.querySelector('[data-always-flag]');
+    const st = await window.fanboxWin.alwaysOnState().catch(() => null);
+    if (!st) return;
+    const mark = (on) => { flag.textContent = !on ? '已关' : st.connected ? '' : '未连微信'; };
+    row.style.display = ''; cb.checked = st.alwaysOn; mark(st.alwaysOn);
+    cb.onchange = async () => {
+      await window.fanboxWin.alwaysOnSet(cb.checked).catch(() => {});
+      mark(cb.checked);
+      toast(cb.checked ? '微信值守已开' : '微信值守已关，微信那头只在你发消息时应答');
+    };
   },
   // 窗口互通开关（只有桌面版有：各窗口的事件都汇在主进程）
   async markRelay(pop) {

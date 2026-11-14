@@ -5,7 +5,7 @@
  * 复用零依赖后端 server.js（文件能力），叠加 node-pty 内嵌终端，
  * 让 TUI coding agent（Claude Code / Codex / Aider…）在界面里直接跑起来。
  */
-const { app, BrowserWindow, ipcMain, shell, nativeImage, Menu, clipboard, dialog, net, session, systemPreferences, utilityProcess } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, nativeImage, Menu, clipboard, dialog, net, session, systemPreferences, utilityProcess, powerMonitor } = require('electron');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
@@ -235,6 +235,7 @@ app.whenReady().then(() => {
   // agent 忙闲轮询：开着「合盖继续干活」时每 30s 结算一次（所有终端收工、缓冲到期后恢复休眠靠它）
   setInterval(() => { if (lidIntent && terminals.size) refreshLidGuard(); }, 30000);
   setInterval(settleAgentStates, 30000);
+  setInterval(waitingWatch, 30000);
   setInterval(autoResumeTick, 20000);
   buildMenu();
   try {
@@ -1149,6 +1150,21 @@ function settleAgentStates() {
   }
   if (any) refreshLidGuard();
 }
+// 常驻值守的事件来源之一：某个窗口的 agent 停下来等你满 10 分钟，而你不在电脑前（系统 5 分钟没有键鼠输入）
+// → 给微信那头的常驻 agent 送一个事件，由它决定要不要在微信上叫你。人在电脑前时不送：指挥台和通知已经在提醒了。
+// 同一次等待只送一次（key 带上进入这个状态的时刻）
+const WAIT_NOTIFY_MS = 10 * 60000, AWAY_IDLE_S = 300;
+function waitingWatch() {
+  if (!wechatInited || !terminals.size) return;
+  let idle = 0;
+  try { idle = powerMonitor.getSystemIdleTime(); } catch { return; }
+  if (idle < AWAY_IDLE_S) return;
+  const now = Date.now();
+  for (const [id, f] of termFacts) {
+    if ((f.state !== 'needs_input' && f.state !== 'needs_permission') || now - f.since < WAIT_NOTIFY_MS) continue;
+    wechatBridge.event('term_waiting', `wait:${id}:${f.since}`, { id, name: (f.cwd && path.basename(f.cwd)) || id, state: f.state, minutes: Math.round((now - f.since) / 60000), tail: (termTails.get(id) || '').slice(-600) });
+  }
+}
 // 断线自动续跑：claude 因为断网、休眠、超时、过载停在半路时替人敲「继续」。判据和退避在 lib/auto-resume.js：
 // 只认瞬时故障；额度用完、要重新登录只提醒；屏幕 10 秒内还在动、输入框里有字都不插手；1/5/15 分钟退避，三次不行交给人
 function autoResumeTick() {
@@ -1170,6 +1186,8 @@ function autoResumeTick() {
       catch { continue; }
     }
     if (win && !win.isDestroyed()) win.webContents.send('agent:resume', { id, action: d.action, attempt: d.attempt, evidence });
+    // 续不上、或者是不代办的故障（额度、登录）：交给常驻 agent，它会在微信上告诉你
+    if (d.action !== 'send' && wechatInited) wechatBridge.event('resume_failed', `resume:${id}:${d.action}:${String(evidence).slice(0, 80)}`, { id, name: (f && f.cwd && path.basename(f.cwd)) || id, action: d.action, evidence });
   }
 }
 function agentRead(id, lines) {
@@ -1465,6 +1483,7 @@ function ensureWechat() {
 ipcMain.handle('wechat:env', async () => { ensureWechat(); return wechatBridge.env(); });
 ipcMain.handle('wechat:setTarget', (e, { target } = {}) => { ensureWechat(); return wechatBridge.setTarget(target); });
 ipcMain.handle('wechat:setCwd', (e, { dir } = {}) => { ensureWechat(); return wechatBridge.setCwd(dir); });
+ipcMain.handle('wechat:alwaysOn', (e, { on } = {}) => { ensureWechat(); return typeof on === 'boolean' ? wechatBridge.setAlwaysOn(on) : { ok: true, alwaysOn: wechatBridge.alwaysOn, connected: wechatBridge.isConnected() }; });
 ipcMain.handle('wechat:setPersona', (e, { persona } = {}) => { ensureWechat(); return wechatBridge.setPersona(persona); });
 ipcMain.handle('wechat:send', async (e, { text } = {}) => { ensureWechat(); return wechatBridge.sendDesktop(text); });
 ipcMain.handle('wechat:conversation', (e, { id } = {}) => { ensureWechat(); return wechatBridge.conversation(id); });

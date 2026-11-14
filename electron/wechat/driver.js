@@ -80,21 +80,22 @@ function which(bin) {
 // claude 无头：续话靠「首轮自带 --session-id <我们生成的 uuid>，之后 --resume 同一 uuid」。
 //  关键：不能让 claude 自动生成 session——print 模式自动建的会话 resume 不到（实测会报 No conversation found）。
 // onProgress(note)：可选。传了就用 stream-json 边跑边把工具调用播报出去；不传走原来的一次性 json。
-async function runClaude(text, cwd, sessionId, persona, onProgress) {
+// opts.readOnly：常驻值守里「没人触发」的那种运行——只给看的工具（读文件、搜索），不给改文件、跑命令，也不挂 MCP
+async function runClaude(text, cwd, sessionId, persona, onProgress, opts = {}) {
   const sid = sessionId || require('crypto').randomUUID();
   const flag = sessionId ? `--resume ${sid}` : `--session-id ${sid}`;
   const sys = persona ? `--append-system-prompt ${shq(persona)}` : '';
   // 一律走 stream-json：持续吐事件，空闲超时才有活动信号可依（非流式 json 整轮沉默会被误杀）。
-  const cmd = `claude -p --output-format stream-json --verbose --dangerously-skip-permissions ${sys} ${flag}`;
-  let result = '', outSid = sid, tokens = 0, cost = 0, r, ms = 0, attempts = 0;
+  const cmd = claudeCmd(sys, flag, opts);
+  let result = '', outSid = sid, tokens = 0, cost = 0, r, ms = 0, attempts = 0, isError = false;
   // 空闲卡死（连接挂起）→ 换新进程=新连接重试，最多 3 次（首次 + 2 重试）。每次清空累计，避免串数据。
   for (attempts = 1; attempts <= 3; attempts++) {
-    result = ''; outSid = sid; tokens = 0; cost = 0;
+    result = ''; outSid = sid; tokens = 0; cost = 0; isError = false;
     // 逐行解析 JSONL：result 事件 → 最终文本/session/用量；工具调用 → 播报（仅传了 onProgress 时）
     const onLine = (line) => {
       const t = line.trim(); if (!t || t[0] !== '{') return;
       let o; try { o = JSON.parse(t); } catch { return; }
-      if (o.type === 'result') { result = o.result || result; outSid = o.session_id || outSid; if (o.usage) tokens = usageTokens(o.usage) || tokens; if (o.total_cost_usd != null) cost = o.total_cost_usd; return; }
+      if (o.type === 'result') { isError = !!o.is_error; result = o.result || result; outSid = o.session_id || outSid; if (o.usage) tokens = usageTokens(o.usage) || tokens; if (o.total_cost_usd != null) cost = o.total_cost_usd; return; }
       if (onProgress && o.type === 'assistant' && o.message && Array.isArray(o.message.content)) {
         for (const b of o.message.content) { if (b.type === 'tool_use') { const p = progressNote(b.name, b.input); if (p) onProgress(p); } }
       }
@@ -112,14 +113,19 @@ async function runClaude(text, cwd, sessionId, persona, onProgress) {
   }
   // resume 的会话失效（旧 id / 过期）→ 自动起新会话重试一次，别把报错甩给用户
   if (sessionId && /No conversation found|session.*not found/i.test(result + ' ' + (r.err || ''))) {
-    return runClaude(text, cwd, null, persona, onProgress);
+    return runClaude(text, cwd, null, persona, onProgress, opts);
   }
   if (!result && !r.ok) {
     result = r.timedOut
       ? `（claude 出错）连接超时，已重试 ${attempts} 次仍无响应——检查下网络/代理`
       : `（claude 出错）${(r.err || '').trim().slice(-300)}`;
   }
-  return { text: result || '（没有返回内容）', sessionId: outSid, tokens, cost, ms, attempts, timedOut: !!r.timedOut };
+  return { text: result || '（没有返回内容）', sessionId: outSid, tokens, cost, ms, attempts, timedOut: !!r.timedOut, isError: isError || !result };
+}
+// 只读的那种运行：工具只给读文件和搜索，不给 Bash / 改文件，也不挂任何 MCP。单独成函数是为了能测到这行命令
+function claudeCmd(sys, flag, opts = {}) {
+  const perm = opts.readOnly ? '--tools Read,Grep,Glob --allowedTools Read Grep Glob --strict-mcp-config' : '--dangerously-skip-permissions';
+  return `claude -p --output-format stream-json --verbose ${perm} ${sys} ${flag}`;
 }
 
 // codex 无头：首轮 `codex exec` 建会话并从 thread.started 抓 thread_id；之后 `codex exec resume <id> -` 续上下文（codex 0.139+）。
@@ -184,4 +190,4 @@ function shq(s) { return `'${String(s).replace(/'/g, "'\\''")}'`; }
 // 启动时预热终端环境复刻（缓存到 env.js，第一条消息就不必等 shell 起来）
 function warmEnv() { fullEnv().catch(() => { /* 失败就退回 process.env，run 时再算 */ }); }
 
-module.exports = { runClaude, runCodex, which, warmEnv };
+module.exports = { runClaude, runCodex, which, warmEnv, run, claudeCmd };

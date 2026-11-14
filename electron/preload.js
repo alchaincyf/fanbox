@@ -96,6 +96,8 @@ contextBridge.exposeInMainWorld('fanboxWin', {
   notifySet: (on) => ipcRenderer.invoke('notify:set', { on }),
   autoResumeState: () => ipcRenderer.invoke('resume:state'), // 断线自动续跑开关：{ on }
   autoResumeSet: (on) => ipcRenderer.invoke('resume:set', { on }),
+  alwaysOnState: () => ipcRenderer.invoke('wechat:alwaysOn', {}), // 微信值守开关：{ alwaysOn, connected }
+  alwaysOnSet: (on) => ipcRenderer.invoke('wechat:alwaysOn', { on }),
   relayState: () => ipcRenderer.invoke('relay:state'), // 窗口互通开关：{ on }
   relaySet: (on) => ipcRenderer.invoke('relay:set', { on }),
 });
