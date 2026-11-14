@@ -2887,7 +2887,7 @@ const wechatView = {
 
 // ---------- coding agent 启动按钮（#38：内置注册表 + 设置面板开关 + config 自定义） ----------
 // 三层：① AGENT_REGISTRY 内置 11 个主流 agent（只收有终端 CLI 形态的）（图标在 /assets/agents/）
-//      ② 设置面板（⚙ 滑杆按钮）勾选启用哪些，存 config.json 的 enabledAgents，默认 claude + codex + dsh
+//      ② 设置面板（⚙ 滑杆按钮）勾选启用哪些，存 config.json 的 enabledAgents，默认 claude + codex
 //      ③ config.json 的 agents 数组做高级自定义：同 id 覆盖内置命令，新 id 追加按钮
 // app: true 的是桌面应用（无终端 CLI 形态，官方确认），按钮改为 open -a 拉起，检测走 open -Ra
 // sessions: 有会话适配器的 agent 声明续接方式——badge 是项目记忆面板的徽标，resumeCmd 里 {id} 占位符替换成会话 id；
@@ -2912,7 +2912,7 @@ const AGENT_REGISTRY = [
   { id: 'codebuddy', label: 'CodeBuddy', cmd: 'codebuddy', bin: 'codebuddy', install: 'npm install -g @tencent-ai/codebuddy-code' },
   { id: 'qoder', label: 'Qoder CLI', cmd: 'qodercli', bin: 'qodercli', install: 'curl -fsSL https://qoder.com/install | bash' },
 ];
-const AGENT_DEFAULTS = ['claude', 'codex', 'dsh'];
+const AGENT_DEFAULTS = ['claude', 'codex'];
 const agentState = { enabled: null, custom: [] };
 const agentIconCache = new Map();
 
