@@ -4945,7 +4945,7 @@ const usagePanel = {
       return;
     }
     this.tokensPending = d.tokensPending;
-    let h = '';
+    let h = '<div id="usage-live" class="usage-live"></div>';
     if (d.codex) {
       const c = d.codex;
       h += `<div class="usage-agent">Codex${c.planType ? ` <i class="usage-plan">${escapeHtml(c.planType)}</i>` : ''}</div>`;
@@ -4973,6 +4973,25 @@ const usagePanel = {
       el.open ? this.expanded.add(el.dataset.agent) : this.expanded.delete(el.dataset.agent);
     }));
   },
+  liveTimer: null,
+  // 实时速率：滑动窗口口径（近1分钟 + 每分钟柱状），与下方按时间汇总互补——汇总看账，这里看势头。
+  // 输出(output)单独列：agent 场景上下文重发占 95%+，混算会虚高一个数量级。
+  async refreshLive() {
+    const box = $('#usage-live');
+    if (!box) { this.stopLive(); return; }
+    let r = null;
+    try { r = await api('/api/agent-rate'); } catch { return; } // 拉不到就保留旧内容
+    if (!r || !r.ok) return;
+    const w = r.win60;
+    const ctx = w.input + w.cacheRead + w.cacheCreate;
+    const p1 = '<div class="usage-live-head"><span class="live-dot' + (w.msgs ? ' on' : '') + '"></span>实时 · 近1分钟 输出 <b>' + this.fmtTok(w.output) + '</b> tok' + (w.output ? '（≈' + Math.round(w.output / 60) + ' tok/s）' : '') + ' · <b>' + w.msgs + '</b> 次调用' + (ctx ? ' · 上下文 ' + this.fmtTok(ctx) + (w.cacheRead ? '（缓存读 ' + this.fmtTok(w.cacheRead) + '）' : '') : '') + '</div>';
+    const max = Math.max(...r.buckets.map((b) => b.output), 1);
+    const p2 = '<div class="usage-bars">' + r.buckets.map((b, i) => '<i class="' + (i === 9 && b.output ? 'now' : '') + '" style="height:' + (b.output ? Math.max(12, Math.round(b.output / max * 100)) : 3) + '%" title="' + (9 - i) + '分钟前 输出 ' + this.fmtTok(b.output) + ' / 共 ' + this.fmtTok(b.total) + ' tok"></i>').join('') + '</div>';
+    const p3 = '<div class="usage-sub">' + (r.active.length ? '在跑：' + r.active.map((a) => escapeHtml(a.name)).join('、') : (w.msgs ? '&nbsp;' : '近10分钟无调用 · 跑一次 agent 数字就跳起来')) + '</div>';
+    box.innerHTML = p1 + p2 + p3;
+  },
+  startLive() { if (!this.liveTimer) { this.refreshLive(); this.liveTimer = setInterval(() => this.refreshLive(), 2000); } },
+  stopLive() { clearInterval(this.liveTimer); this.liveTimer = null; },
   async refresh() {
     if (this.loading) return;
     this.loading = true;
@@ -4989,8 +5008,8 @@ const usagePanel = {
     const on = this.open();
     $('#usage-body').classList.toggle('hidden', !on);
     $('#usage-arrow').textContent = on ? '▾' : '▸';
-    clearInterval(this.timer); this.timer = null; clearTimeout(this.pendingTimer);
-    if (on) { this.refresh(); this.timer = setInterval(() => this.refresh(), 60000); }
+    clearInterval(this.timer); this.timer = null; clearTimeout(this.pendingTimer); this.stopLive();
+    if (on) { this.refresh(); this.timer = setInterval(() => this.refresh(), 60000); this.startLive(); }
   },
   bind() {
     $('#usage-toggle').onclick = () => {

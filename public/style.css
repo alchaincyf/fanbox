@@ -1509,3 +1509,13 @@ body { transition: background-color 0.28s ease, color 0.28s ease; }
 .usage-breakdown > div { display: flex; justify-content: space-between; gap: 8px; margin-top: 5px; }
 .usage-breakdown strong { color: var(--accent); }
 .usage-sub { overflow-wrap: anywhere; }
+/* 用量面板：实时速率条（近1分钟窗口 + 近10分钟柱状） */
+.usage-live { margin: 2px 0 10px; }
+.usage-live-head { font-size: 11px; color: var(--text-dim); display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+.usage-live-head b { color: var(--text); font-weight: 700; }
+.live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--border); display: inline-block; flex: none; }
+.live-dot.on { background: var(--green, #3fb950); animation: livePulse 1.6s ease-in-out infinite; }
+@keyframes livePulse { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
+.usage-bars { display: flex; align-items: flex-end; gap: 3px; height: 26px; margin: 7px 0 5px; }
+.usage-bars i { flex: 1; min-height: 2px; background: var(--accent-soft); border-radius: 2px 2px 0 0; transition: height .5s ease; }
+.usage-bars i.now { background: var(--accent); }
