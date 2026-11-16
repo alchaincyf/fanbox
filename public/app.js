@@ -691,6 +691,12 @@ function moveCursor(d) {
   if (state.cursor < 0) state.cursor = 0;
   else state.cursor = Math.min(state.visible.length - 1, Math.max(0, state.cursor + d));
   highlightCursor();
+  // 预览开着时，预览跟着键盘光标走：文件就切，目录不动；不记最近（方向键扫过不算「打开」）
+  const e = state.visible[state.cursor];
+  if (e && !e.isDir && e.path !== state.selected && !$('#preview').classList.contains('hidden')) {
+    if (follow.on) setFileFollow(false, '手动接管，文件跟随已停');
+    applySelection(e.path); openPreview(e);
+  }
 }
 function cursorEnter(editor) {
   const e = state.visible[state.cursor];
@@ -702,8 +708,10 @@ function cursorEnter(editor) {
 }
 
 // ---------- 预览 ----------
+let previewSeq = 0; // 连按方向键会并发多个 openPreview（含异步读文件），晚发的必须赢：每次 +1，await 之后对不上就丢弃
 async function openPreview(e) {
-  if (!await guardDirty()) return;
+  const seq = ++previewSeq;
+  if (!await guardDirty() || seq !== previewSeq) return;
   mona.disposeIfAny(); crepe.disposeIfAny(); imgEditState = null; // 离开编辑态时回收编辑器（连带 worker），避免泄漏
   showPreviewPanel();
   $('#preview-title').textContent = e.name;
@@ -729,12 +737,14 @@ async function openPreview(e) {
     // 代码/文本「预览即编辑」：像 md 一样默认进可编辑态，不用再点编辑按钮。
     // html 例外（给人看的是渲染形态）、csv/tsv 例外（表格视图更有用）→ 仍走只读渲染。
     if (isHtmlName(e.name) || /\.(csv|tsv)$/i.test(e.name)) {
-      renderTextPreview(await api('/api/read?path=' + encodeURIComponent(e.path)));
+      const data = await api('/api/read?path=' + encodeURIComponent(e.path));
+      if (seq === previewSeq) renderTextPreview(data);
     } else {
       return enterEditMode(e); // md/代码/纯文本：打开即可编辑、自动保存守卫
     }
   } else if (k === 'archive') {
     const d = await api('/api/archive?path=' + encodeURIComponent(e.path));
+    if (seq !== previewSeq) return;
     if (!d.ok) {
       body.innerHTML = `<div class="empty-state"><div class="big">${iconSvg(e, 48)}</div>${escapeHtml(d.error || '无法读取')}<br><br>${fmtSize(e.size)}</div>`;
     } else {
@@ -1431,7 +1441,8 @@ async function refresh() {
 // 文本原地编辑：md → Milkdown Crepe 所见即所得；其它 → Monaco；都失败回退 textarea
 async function enterEditMode(e) {
   if (follow.on) setFileFollow(false, '手动接管，文件跟随已停'); // 编辑时绝不能被跟随抢屏
-  if (!await guardDirty()) return;
+  const seq = previewSeq; // 入口同步抓取：此后别的 openPreview 一发生就对不上
+  if (!await guardDirty() || seq !== previewSeq) return;
   currentEditor = null; // 新编辑器接管前先清旧重载钩子；md 会在 mdEditor 里重新挂
   mona.disposeIfAny();
   crepe.disposeIfAny();
@@ -1443,6 +1454,7 @@ async function enterEditMode(e) {
   const body = $('#preview-body');
   body.innerHTML = '<div class="cmdk-loading">加载中…</div>';
   const data = await api('/api/read?path=' + encodeURIComponent(e.path));
+  if (seq !== previewSeq) return; // 读文件期间已切到别的预览
   if (data.tooLarge) {
     toast('文件太大，暂不支持原地编辑', true);
     renderTextPreview(data); return; // 统一回退只读渲染；代码也默认进编辑态了，回 openPreview 会死循环
@@ -1496,7 +1508,9 @@ async function enterEditMode(e) {
     `<button id="ed-redo" class="ghost-btn" title="重做 ⇧⌘Z" disabled>${ic('redo', 'currentColor', 15)}</button>` +
     `<span id="ed-status" class="editor-hint">自动保存</span></div>`;
 
-  if (await mona.load()) {
+  const monaOk = await mona.load();
+  if (seq !== previewSeq) return; // 加载编辑器期间已切走：别把编辑器画到新预览上
+  if (monaOk) {
     const monaco = window.monaco;
     body.innerHTML = editorBar + `<div id="ed-host" class="mona-host"></div>`;
     const ed = monaco.editor.create($('#ed-host'), {
@@ -3364,6 +3378,15 @@ function bindEvents() {
       else term.toggleMax();
       return;
     }
+    // ⌘⇧G 前往文件夹（只认 ⌘；编辑器/输入框里不抢，终端里照常响）
+    if (e.metaKey && e.shiftKey && e.code === 'KeyG') {
+      const ae = document.activeElement;
+      if ((['INPUT', 'TEXTAREA'].includes(ae.tagName) || ae.isContentEditable) && !ae.closest('.xterm')) return; // xterm 的输入层本身是 textarea，要放行
+      e.preventDefault();
+      if (document.querySelector('.input-overlay')) return; // 已有弹窗在，别叠
+      inputDialog('前往文件夹', tilde(state.cwd), '~/path 或 /abs/path').then((p) => { if (p) navigate(p); });
+      return;
+    }
     if (cmdkOpen) {
       if (e.key === 'Escape') cmdk.close();
       else if (e.key === 'ArrowDown') { e.preventDefault(); cmdk.move(1); }
@@ -4263,6 +4286,7 @@ const term = {
       }
       if (cmd && e.altKey && e.code === 'KeyL') return false; // ⌘⌥L 跳「下一个在等你的」：不给 xterm，冒泡到全局快捷键
     if (cmd && e.shiftKey && e.code === 'KeyM') return false; // ⌘⇧M 终端铺满/还原：同上，冒泡到全局快捷键（PR #53）
+      if (e.metaKey && e.shiftKey && e.code === 'KeyG') return false; // ⌘⇧G 前往文件夹：同上，冒泡到全局快捷键（只认 ⌘，Ctrl+Shift+G 留给终端里的 TUI；cmd 含 ctrl 不能用）
       return true;
     });
 
