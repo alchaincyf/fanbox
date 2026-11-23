@@ -2900,8 +2900,8 @@ const wechatView = {
 };
 
 // ---------- coding agent 启动按钮（#38：内置注册表 + 设置面板开关 + config 自定义） ----------
-// 三层：① AGENT_REGISTRY 内置 11 个主流 agent（只收有终端 CLI 形态的）（图标在 /assets/agents/）
-//      ② 设置面板（⚙ 滑杆按钮）勾选启用哪些，存 config.json 的 enabledAgents，默认 claude + codex
+// 三层：① AGENT_REGISTRY 内置 13 个命令行启动入口（T3 Code 启动服务后打开网页）（图标在 /assets/agents/）
+//      ② 设置面板（⚙ 滑杆按钮）勾选启用哪些，存 config.json 的 enabledAgents，默认 claude + codex + agy
 //      ③ config.json 的 agents 数组做高级自定义：同 id 覆盖内置命令，新 id 追加按钮
 // app: true 的是桌面应用（无终端 CLI 形态，官方确认），按钮改为 open -a 拉起，检测走 open -Ra
 // sessions: 有会话适配器的 agent 声明续接方式——badge 是项目记忆面板的徽标，resumeCmd 里 {id} 占位符替换成会话 id；
@@ -2914,6 +2914,8 @@ const CODEX_HOOKS = window.fanboxEnv ? ' -c "notify=[\\"$HOME/.fanbox/hooks/code
 const AGENT_REGISTRY = [
   { id: 'claude', label: 'Claude Code', cmd: 'claude --dangerously-skip-permissions' + CLAUDE_HOOKS, bin: 'claude', install: 'npm install -g @anthropic-ai/claude-code', sessions: { badge: 'C', resumeCmd: 'claude --dangerously-skip-permissions' + CLAUDE_HOOKS + ' --resume {id}' } },
   { id: 'codex', label: 'Codex', cmd: 'codex' + CODEX_HOOKS, bin: 'codex', install: 'npm install -g @openai/codex', sessions: { badge: '>_', resumeCmd: 'codex' + CODEX_HOOKS + ' resume {id}' } },
+  { id: 'agy', label: 'Antigravity CLI', cmd: 'agy --dangerously-skip-permissions', bin: 'agy', install: 'curl -fsSL https://antigravity.google/cli/install.sh | bash' },
+  { id: 't3', label: 'T3 Code', cmd: 't3', bin: 't3', install: 'curl -fsSL https://t3.codes/install.sh | sh' },
   // DeepSeek Harness：官方启动器 dsh 按 profile 起应用，终端界面是 tui 这个 profile（目前由社区插件提供，装哪个都走同一条命令）。
   // 用 npx 而不是裸 dsh：没全局装也能起，也不会被用户自己给 dsh 起的 shell 别名带偏
   { id: 'dsh', label: 'DeepSeek Harness', cmd: 'npx -y @deepseek-ai/dsh --profile tui', bin: 'npx', install: 'npx -y @deepseek-ai/dsh plugin --profile tui add @dsh-tui/dsh-tui （终端界面是社区插件，也可换别的 tui 插件）' },
@@ -2926,7 +2928,7 @@ const AGENT_REGISTRY = [
   { id: 'codebuddy', label: 'CodeBuddy', cmd: 'codebuddy', bin: 'codebuddy', install: 'npm install -g @tencent-ai/codebuddy-code' },
   { id: 'qoder', label: 'Qoder CLI', cmd: 'qodercli', bin: 'qodercli', install: 'curl -fsSL https://qoder.com/install | bash' },
 ];
-const AGENT_DEFAULTS = ['claude', 'codex'];
+const AGENT_DEFAULTS = ['claude', 'codex', 'agy'];
 const agentState = { enabled: null, custom: [] };
 const agentIconCache = new Map();
 
