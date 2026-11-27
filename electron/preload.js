@@ -96,6 +96,9 @@ contextBridge.exposeInMainWorld('fanboxWin', {
   notifySet: (on) => ipcRenderer.invoke('notify:set', { on }),
   autoResumeState: () => ipcRenderer.invoke('resume:state'), // 断线自动续跑开关：{ on }
   autoResumeSet: (on) => ipcRenderer.invoke('resume:set', { on }),
+  restoreState: () => ipcRenderer.invoke('restore:state'), // 重启后恢复会话开关：{ on }
+  restoreSet: (on) => ipcRenderer.invoke('restore:set', { on }),
+  restoreTake: () => ipcRenderer.invoke('restore:take'), // 领上次留下、待续上的会话 [{ cwd, cmd, busy, agent }]，只给一次
   alwaysOnState: () => ipcRenderer.invoke('wechat:alwaysOn', {}), // 微信值守开关：{ alwaysOn, connected }
   alwaysOnSet: (on) => ipcRenderer.invoke('wechat:alwaysOn', { on }),
   reachState: () => ipcRenderer.invoke('reach:state'), // 叫人的通道：{ alwaysOn, wechat, feishu }

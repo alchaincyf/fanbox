@@ -3031,6 +3031,11 @@ const agentsPop = {
         <span class="ap-name">断线自动续跑</span>
         <span class="ap-flag" data-resume-flag></span>
       </label>
+      <label class="ap-row" data-restore style="display:none" title="电脑重启或关机、FanBox 升级或退出之后，下次打开 FanBox 时把之前开着的 Claude Code 和 Codex 窗口在原目录续上原来的对话；重启前正在干活的，续上时补一句「从中断的地方继续」。自己关掉的窗口不会回来。清单只存在本机 ~/.fanbox/session-restore.json">
+        <input type="checkbox">
+        <span class="ap-name">重启后恢复会话</span>
+        <span class="ap-flag" data-restore-flag></span>
+      </label>
       <label class="ap-row" data-relay style="display:none" title="你在一个窗口里对 agent 说的话，会转给同一个项目目录下的其他 Claude Code 窗口（家目录下开的窗口之间不转）；一个窗口改了另一个窗口也改过的文件，也会告诉后者。FanBox 自己不存盘、不上传；转过去的话会进入收到它的那个会话。Codex 窗口里说的话能转出去，但它自己收不到">
         <input type="checkbox">
         <span class="ap-name">窗口互通</span>
@@ -3068,6 +3073,7 @@ const agentsPop = {
     if (wgCb) wgCb.onchange = () => { term.setWebgl(wgCb.checked); toast(wgCb.checked ? 'WebGL 渲染已开启' : '已切换兼容渲染（修中文乱码）'); };
     this.markNotify(pop);
     this.markResume(pop);
+    this.markRestore(pop);
     this.markRelay(pop);
     this.markAlways(pop);
     pop.querySelectorAll('.ap-list .ap-row input').forEach((cb) => {
@@ -3138,6 +3144,19 @@ const agentsPop = {
       await window.fanboxWin.autoResumeSet(cb.checked).catch(() => {});
       flag.textContent = cb.checked ? '' : '已关';
       toast(cb.checked ? '断线自动续跑已开' : '断线自动续跑已关，断线后要你自己敲「继续」');
+    };
+  },
+  // 重启后恢复会话开关（只有桌面版有：清单由主进程从 agent hooks 记下）
+  async markRestore(pop) {
+    const row = pop.querySelector('[data-restore]');
+    if (!row || !window.fanboxWin || !window.fanboxWin.restoreState) return;
+    const cb = row.querySelector('input'), flag = row.querySelector('[data-restore-flag]');
+    const st = await window.fanboxWin.restoreState().catch(() => ({ on: true }));
+    row.style.display = ''; cb.checked = st.on; flag.textContent = st.on ? '' : '已关';
+    cb.onchange = async () => {
+      await window.fanboxWin.restoreSet(cb.checked).catch(() => {});
+      flag.textContent = cb.checked ? '' : '已关';
+      toast(cb.checked ? '重启后恢复会话已开' : '重启后恢复会话已关，重启后窗口不再自动续上');
     };
   },
   // 系统通知开关：只有在这里亲手打开时才可能触发系统 / 浏览器的授权询问，开了立刻发一条测试通知当面验证
@@ -6461,8 +6480,31 @@ async function init() {
     if (saved && Array.isArray(saved.tabs) && saved.tabs.length) await term.restore(saved);
     else term.open();
   }
+  restoreAgentSessions(); // 不 await：不挡引导和更新提示
   maybeShowGuide();
   bindUpdateNotice();
+}
+// 重启后恢复会话：主进程启动时认领了上次留下的清单（lib/session-restore.js），标签还原完再领过来，
+// 在同目录还原出来的空 shell 标签里续上会话；对不上的才新开标签。只领一次，所以不会重复续
+async function restoreAgentSessions() {
+  if (!term.available() || !window.fanboxWin || !window.fanboxWin.restoreTake) return;
+  const plan = await window.fanboxWin.restoreTake().catch(() => null);
+  if (!Array.isArray(plan) || !plan.length) return;
+  const used = new Set();
+  let n = 0, busy = 0;
+  for (const w of plan) {
+    let s = null;
+    for (const x of term.sessions) {
+      if (used.has(x.id) || x.dead || (x.cwd || x.startDir) !== w.cwd) continue;
+      if (await term.isPlainShell(x)) { s = x; break; }
+    }
+    if (!s) s = await term.newTab(w.cwd, { background: true });
+    if (!s || s.dead) continue;
+    used.add(s.id);
+    term.input(s.id, w.cmd + '\r');
+    n++; if (w.busy) busy++;
+  }
+  if (n) toast(`已续上重启前的 ${n} 个会话${busy ? `，其中 ${busy} 个接着干活` : ''}${n < plan.length ? `，${plan.length - n} 个没续上` : ''}`, n < plan.length);
 }
 // 新版本提示：主进程查到 GitHub 有新 Release 时右下角弹胶囊（不强更不打扰）。
 // 三档：能自动装（Release 带 latest-mac.yml + 同架构 zip）→「更新」后台下载、下完「重启安装」；
@@ -6537,13 +6579,13 @@ window.fbWebgl = (on) => { term.setWebgl(!!on); console.log('[fanbox] WebGL ' + 
 
 // Agent 控制接口（/api/agent/*）的渲染侧配合：应 main 之邀开新终端 tab + 给被控 tab 闪 ⚡
 if (window.fanboxAgentCtl) {
-  window.fanboxAgentCtl.onCreate(async ({ reqId, cwd }) => {
+  window.fanboxAgentCtl.onCreate(async ({ reqId, cwd, quiet }) => {
     try {
       // 后台开：不弹开收起的终端面板、不切标签、不抢焦点（可能正在别处打字或语音输入）。
       // 面板收着时只留一句提示；它之后等你确认，终端按钮红点 + Dock 角标会喊你
       const hidden = $('#terminal-panel').classList.contains('hidden');
       const sess = await term.newTab(cwd || undefined, { background: true });
-      if (hidden && sess) toast(`agent 在后台新开了终端「${sess.title}」，点「终端」查看`);
+      if (hidden && sess && !quiet) toast(`agent 在后台新开了终端「${sess.title}」，点「终端」查看`);
       window.fanboxAgentCtl.created({ reqId, ok: !!(sess && sess.id), id: sess && sess.id });
     } catch (e) { window.fanboxAgentCtl.created({ reqId, ok: false, error: String(e && e.message || e) }); }
   });

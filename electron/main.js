@@ -41,6 +41,11 @@ const termFacts = new Map();
 const agentState = require('../lib/agent-state');
 const autoResume = require('../lib/auto-resume');
 const resumeFacts = new Map(); // id -> 这个终端当前这次故障的续跑记录（见 autoResumeTick）
+const sessionRestore = require('../lib/session-restore');
+const restoreWins = new Map(); // id -> 重启后要续上的窗口记录（见 restoreTouch），写进 ~/.fanbox/session-restore.json
+const restoreDrop = new Map(); // id -> 延迟删除的定时器：窗口关了 8 秒后才从清单里划掉
+let restoreFrozen = false;     // 正在退出或关机：终端会一个个死掉，这时不许再从清单里划人
+let restoreSaveT = null;
 const relay = require('../lib/relay');
 const notify = require('../lib/notify'); // 叫人：终端里的 agent 给用户发消息（见 agentNotify）
 const relayLog = relay.createLog(); // 窗口互通的内存日志：各窗口里你的原话、agent 改的文件（见 agentRelay）。不落盘
@@ -255,7 +260,10 @@ app.whenReady().then(() => {
     const view = m && m.items.find((i) => i.label === M('视图', 'View'));
     console.log('[lid] 视图 子菜单 =', view ? JSON.stringify(view.submenu.items.map((x) => x.label || `<${x.type}>`)) : '没找到视图菜单');
   } catch (e) { console.log('[lid] dump menu 出错:', e.message); }
+  restorePrepare(); // 上次留下的清单必须在任何终端开出来之前认领：晚了，这次新开的窗口会先把它覆盖掉
   createWindow();
+  // 关机/重启：别让「还有 agent 在干活」的确认框把系统重启拦下来；清单此刻定格，下次打开 FanBox 续上
+  try { powerMonitor.on('shutdown', () => { quitConfirmed = true; isQuitting = true; restoreFreeze(); }); } catch { /* 不支持的平台忽略 */ }
   // 临时调试：dev 实例强制抢到最前，避免和正式版搞混。只限开发实例——正式版若跟着抢，开机自启 / 更新后重启时会把你正在打字的窗口夺走
   if (!app.isPackaged) setTimeout(() => { try { app.focus({ steal: true }); if (win && !win.isDestroyed()) { win.show(); win.focus(); win.setAlwaysOnTop(true); setTimeout(() => win.setAlwaysOnTop(false), 1500); } } catch { /* */ } }, 1200);
   startShotWatch();
@@ -522,6 +530,14 @@ ipcMain.handle('resume:state', () => ({ on: readConfig().autoResume !== false })
 ipcMain.handle('relay:state', () => ({ on: relayOn() }));
 ipcMain.handle('relay:set', (e, { on } = {}) => { writeConfig({ relay: !!on }); relayOnCache = !!on; if (!on) relayLog.items.length = 0; return { ok: true }; });
 ipcMain.handle('resume:set', (e, { on } = {}) => { writeConfig({ autoResume: !!on }); if (!on) resumeFacts.clear(); return { ok: true }; });
+// 重启后恢复会话：默认开，设置里可关（~/.fanbox/config.json 的 restoreSessions）。关掉时连已经记下的清单一起清掉
+ipcMain.handle('restore:state', () => ({ on: restoreOn() }));
+ipcMain.handle('restore:take', () => { const p = restorePlan || []; restorePlan = null; return p; });
+ipcMain.handle('restore:set', (e, { on } = {}) => {
+  writeConfig({ restoreSessions: !!on });
+  if (on) restoreSave(); else sessionRestore.claim();
+  return { ok: true };
+});
 
 // 预览全屏时藏掉左上角红黄绿系统按钮——它和右侧自家关闭图标太像，容易让人误点
 ipcMain.handle('win:traffic', (e, { show }) => {
@@ -822,7 +838,7 @@ app.on('before-quit', (e) => {
   // 只拦「agent 正在干活」的情况：开着的裸 shell、停在提示符等输入的 claude 都不算——
   // 从前按「有没有终端开着」拦，每次退出都要多点一下，久了确认框就成了噪音
   const active = quitConfirmed ? [] : activeAgentTerms();
-  if (active.length === 0) { isQuitting = true; return; }
+  if (active.length === 0) { isQuitting = true; restoreFreeze(); return; }
   e.preventDefault();
   const names = active.map((a) => a.label).join('、');
   const choice = dialog.showMessageBoxSync(win && !win.isDestroyed() ? win : undefined, {
@@ -831,9 +847,11 @@ app.on('before-quit', (e) => {
     defaultId: 0,
     cancelId: 0,
     message: M(`还有 ${active.length} 个 agent 正在干活`, `${active.length} agent(s) still working`),
-    detail: M(`${names}\n\n退出会终止这些任务，确定退出？`, `${names}\n\nQuitting will terminate these tasks. Quit anyway?`),
+    detail: restoreOn()
+      ? M(`${names}\n\n退出会中断这些任务；下次打开 FanBox 时会在原目录续上，并让它们接着干。确定退出？`, `${names}\n\nQuitting interrupts these tasks; FanBox will resume them in place next time it opens. Quit anyway?`)
+      : M(`${names}\n\n退出会终止这些任务，确定退出？`, `${names}\n\nQuitting will terminate these tasks. Quit anyway?`),
   });
-  if (choice === 1) { quitConfirmed = true; isQuitting = true; app.quit(); }
+  if (choice === 1) { quitConfirmed = true; isQuitting = true; restoreFreeze(); app.quit(); }
 });
 app.on('window-all-closed', () => {
   terminals.forEach((p) => { try { p.kill(); } catch { /* */ } });
@@ -955,6 +973,7 @@ ipcMain.handle('pty:spawn', (e, { id, cwd, cols, rows, theme }) => {
     termLastOut.delete(id);
     termFacts.delete(id);
     resumeFacts.delete(id);
+    restoreForget(id);
     refreshLidGuard(); // 最后一个终端退出即恢复休眠
     recStop(id);
     if (win && !win.isDestroyed()) win.webContents.send('pty:exit', { id, exitCode });
@@ -1083,6 +1102,48 @@ async function agentList() {
   }
   return { ok: true, terminals: arr };
 }
+// ---------- 重启后恢复会话（lib/session-restore.js）----------
+// 开着的 claude/codex 窗口随 hook 事件记进清单；窗口关掉 8 秒后才划掉（关机时所有终端几乎同时死掉、来不及写盘，
+// 清单就停在关机前那一刻）；正常退出（⌘Q、升级）在 before-quit 定格。下次启动认领清单，在原目录逐个续上。
+const restoreOn = () => readConfig().restoreSessions !== false;
+function restoreSave() {
+  clearTimeout(restoreSaveT); restoreSaveT = null;
+  if (!restoreOn()) return;
+  try { sessionRestore.save([...restoreWins.values()]); } catch (e) { console.log('[restore] 写清单失败:', e.message); }
+}
+const restoreSoon = () => { if (!restoreSaveT) restoreSaveT = setTimeout(restoreSave, 500); };
+function restoreTouch(id) {
+  const w = sessionRestore.entryOf(id, termFacts.get(id));
+  if (!w) return;
+  clearTimeout(restoreDrop.get(id)); restoreDrop.delete(id);
+  const old = restoreWins.get(id);
+  restoreWins.set(id, w);
+  if (!old || old.sessionId !== w.sessionId || old.busy !== w.busy || old.cwd !== w.cwd) restoreSoon();
+}
+function restoreForget(id) {
+  if (restoreFrozen || !restoreWins.has(id) || restoreDrop.has(id)) return;
+  restoreDrop.set(id, setTimeout(() => {
+    restoreDrop.delete(id);
+    if (restoreFrozen) return;
+    restoreWins.delete(id); restoreSave();
+  }, 8000));
+}
+function restoreFreeze() {
+  if (restoreFrozen) return;
+  restoreFrozen = true;
+  restoreDrop.forEach((t) => clearTimeout(t)); restoreDrop.clear();
+  restoreSave();
+}
+// 启动时认领的上次清单，等渲染层还原完标签来领（restore:take，只给一次）。目录取真实路径，好和标签的目录对上
+let restorePlan = null;
+function restorePrepare() {
+  if (!restoreOn()) return;
+  restorePlan = sessionRestore.plan(sessionRestore.claim()).map((w) => {
+    let cwd = w.cwd; try { cwd = fs.realpathSync(w.cwd); } catch { /* 目录刚被删就用原值，渲染层会新开标签 */ }
+    return { cwd, cmd: sessionRestore.command(w), busy: !!w.busy, agent: w.agent };
+  });
+  if (restorePlan.length) console.log(`[restore] 上次留下 ${restorePlan.length} 个会话待续上`);
+}
 // 官方 hook 事件入口（/api/agent/event → RPC → 这里）。claude 看 hook_event_name，codex 看 type。
 // 状态机（claude 部分在 lib/agent-state.js）：SessionStart/UserPromptSubmit/PreToolUse → working；Notification permission_prompt → needs_permission；
 // idle_prompt / agent_needs_input → needs_input；Stop / agent_completed → done；SessionEnd → ended（事实随即清掉，
@@ -1133,7 +1194,7 @@ function agentEvent(termId, body) {
   if (changed && (state === 'done' || state === 'needs_input')) f.restAt = now;
   f.state = state; f.lastEventAt = now;
   if (win && !win.isDestroyed()) win.webContents.send('agent:event', { id, state, event, file: file || undefined, agent: f.agent });
-  if (state === 'ended') termFacts.delete(id);
+  if (state === 'ended') { termFacts.delete(id); restoreForget(id); } else restoreTouch(id);
   if (changed) refreshLidGuard(); // 收工/开工立刻结算电源守卫，不等 30s 轮询
   return { ok: true, id, state };
 }
@@ -1260,7 +1321,7 @@ function agentCreate(opts = {}) {
     if (!win || win.isDestroyed()) return resolve({ ok: false, error: 'no window' });
     const reqId = 'ac' + (++agentReqSeq);
     agentCreateWaiters.set(reqId, resolve);
-    win.webContents.send('agent:term-create', { reqId, cwd: typeof opts.cwd === 'string' ? opts.cwd : '' });
+    win.webContents.send('agent:term-create', { reqId, cwd: typeof opts.cwd === 'string' ? opts.cwd : '', quiet: !!opts.quiet });
     setTimeout(() => { if (agentCreateWaiters.delete(reqId)) resolve({ ok: false, error: 'renderer timeout' }); }, 10000);
   }).then(async (r) => {
     if (!r.ok) return r;
